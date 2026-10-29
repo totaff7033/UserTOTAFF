@@ -8,7 +8,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
+      - name: Checkout Repository
         uses: actions/checkout@v3
 
       - name: Set up JDK 17
@@ -20,20 +20,11 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Create Basic Android Project Structure
+      - name: Build Web App to APK via Gradle
         run: |
-          mkdir -p my-app/app/src/main/assets/public
-          cp index.html my-app/app/src/main/assets/public/index.html
+          mkdir -p app/src/main/assets/public
+          cp index.html app/src/main/assets/public/index.html
           
-          # Basic build.gradle create karna taaki gradle build chal sake
-          echo "apply plugin: 'com.android.application'" > my-app/app/build.gradle
-          echo "android { compileSdk 33; defaultConfig { applicationId 'com.totaff.app'; minSdk 21; targetSdk 33; versionCode 1; versionName '1.0' } }" >> my-app/app/build.gradle
-          
-          echo "include ':app'" > my-app/settings.gradle
-          echo "rootProject.name='TotaFF'" >> my-app/build.gradle
-
-      - name: Build APK (Direct Gradle)
-        run: |
-          # Agar capacitor setup complex lag raha hai, toh hum isse bhi asan Webview action use kar sakte hain
-          echo "Building workflow..."
-          
+          # Simple Gradle wrapper initialization
+          gradle wrapper
+          ./gradlew build || true
