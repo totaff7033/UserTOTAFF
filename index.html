@@ -1,0 +1,1761 @@
+<!DOCTYPE html>
+<html lang="hi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="theme-color" content="#060E24">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="format-detection" content="telephone=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>TOTA FF - USER APP</title>
+
+    <script>
+/* ================= SAFE-AREA AUTO FIX (sirf HTML/JS, native code ki zaroorat nahi) =================
+   1) Pehle browser ka env(safe-area-inset-*) padha jaata hai.
+   2) Agar WebView 0 deta hai (status/nav bar overlap wali problem), to neeche ki FALLBACK values lagti hain.
+   Overlap ab bhi dikhe to sirf in 2 numbers ko badal do (CSS px):                                      */
+(function () {
+    var FALLBACK_TOP = 28;      // status bar ki height (zyada overlap ho to 32-36 karo)
+    var FALLBACK_BOTTOM = 20;   // navigation/gesture bar ki height (3-button nav ho to 48 karo)
+
+    var root = document.documentElement;
+    function setVars(t, b, l, r) {
+        var st = root.style;
+        st.setProperty('--app-top', (+t || 0) + 'px'); st.setProperty('--app-bottom', (+b || 0) + 'px');
+        st.setProperty('--app-left', (+l || 0) + 'px'); st.setProperty('--app-right', (+r || 0) + 'px');
+    }
+    window.setSafeInsets = setVars;   /* optional manual override */
+
+    function envPx(side) {
+        var d = document.createElement('div');
+        d.style.cssText = 'position:fixed;visibility:hidden;pointer-events:none;padding-' + side + ':env(safe-area-inset-' + side + ',0px)';
+        document.body.appendChild(d);
+        var v = parseFloat(getComputedStyle(d)['padding' + side.charAt(0).toUpperCase() + side.slice(1)]) || 0;
+        document.body.removeChild(d);
+        return v;
+    }
+    function isAndroidWebView() { return /Android/i.test(navigator.userAgent) && (/; wv\)/.test(navigator.userAgent) || /Version\/[\d.]+/.test(navigator.userAgent)); }
+    function apply() {
+        if (!document.body) return;
+        var t = envPx('top'), b = envPx('bottom');
+        var standalone = /Android/i.test(navigator.userAgent) && isAndroidWebView();
+        setVars(t > 0 ? 0 : (standalone ? FALLBACK_TOP : 0), b > 0 ? 0 : (standalone ? FALLBACK_BOTTOM : 0), 0, 0);
+    }
+    document.addEventListener('DOMContentLoaded', apply);
+    window.addEventListener('load', apply);
+    window.addEventListener('orientationchange', function () { setTimeout(apply, 300); });
+})();
+</script>
+    <link rel="preconnect" href="https://www.gstatic.com" crossorigin>
+    <link rel="preconnect" href="https://tota-ff-default-rtdb.firebaseio.com" crossorigin>
+
+    <link rel="preconnect" href="https://cdn.onesignal.com" crossorigin>
+    <script>
+/* ================= ONESIGNAL PUSH (Web SDK v16 + native WebView bridge) =================
+   SETUP: neeche ONESIGNAL_APP_ID mein apna OneSignal App ID paste karo (Dashboard > Settings > Keys & IDs).
+   Firebase UID ko OneSignal External ID banaya jaata hai: login/signup/session-restore par auto-link, logout par unlink.
+   Dashboard/API mein "include_aliases": {"external_id": ["<uid>", ...]} se Selected Users, "included_segments": ["All"] se All Users. */
+var ONESIGNAL_APP_ID = "be36aafa-51da-4118-887e-d9e886258afd";
+(function () {
+    var ua = navigator.userAgent || '';
+    var inWebView = /; wv\)/.test(ua) || (/Android/i.test(ua) && /Version\/[\d.]+/.test(ua)) || (/(iPhone|iPod|iPad)/i.test(ua) && !/Safari/i.test(ua));
+    var wantUid = null, linkedUid = null, webReady = false;
+    window.OneSignalDeferred = window.OneSignalDeferred || [];
+
+    function nativeCall(fn) { try { fn(); return true; } catch (e) { return false; } }
+    function nativeLogin(uid) {
+        var p = window.plugins && window.plugins.OneSignal, o = window.OneSignal;
+        if (p && p.login) return nativeCall(function () { p.login(uid); });
+        if (o && o.login && !o.Notifications) return nativeCall(function () { o.login(uid); });          // Cordova/Capacitor style
+        if (p && p.setExternalUserId) return nativeCall(function () { p.setExternalUserId(uid); });         // legacy native plugin
+        if (window.Android && window.Android.onesignalLogin) return nativeCall(function () { window.Android.onesignalLogin(uid); }); // custom APK bridge
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.onesignalLogin) return nativeCall(function () { window.webkit.messageHandlers.onesignalLogin.postMessage(uid); });
+        return false;
+    }
+    function nativeLogout() {
+        var p = window.plugins && window.plugins.OneSignal, o = window.OneSignal;
+        if (p && p.logout) return nativeCall(function () { p.logout(); });
+        if (o && o.logout && !o.Notifications) return nativeCall(function () { o.logout(); });
+        if (p && p.removeExternalUserId) return nativeCall(function () { p.removeExternalUserId(); });
+        if (window.Android && window.Android.onesignalLogout) return nativeCall(function () { window.Android.onesignalLogout(); });
+        if (window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.onesignalLogout) return nativeCall(function () { window.webkit.messageHandlers.onesignalLogout.postMessage(''); });
+        return false;
+    }
+
+    /* Web SDK sirf normal browser / PWA mein; WebView mein web push chalta hi nahi, isliye wahan load hi nahi karte (koi error nahi aayega) */
+    if (!inWebView && ONESIGNAL_APP_ID && ONESIGNAL_APP_ID.indexOf('YOUR-') !== 0 && 'serviceWorker' in navigator && window.isSecureContext) {
+        window.OneSignalDeferred.push(function (OneSignal) {
+            OneSignal.init({ appId: ONESIGNAL_APP_ID, allowLocalhostAsSecureOrigin: true, notifyButton: { enable: false } })
+                .then(function () { webReady = true; if (wantUid) { try { OneSignal.login(wantUid); linkedUid = wantUid; } catch (e) {} } })
+                .catch(function (e) { console.warn('OneSignal init fail:', e); });
+        });
+        var s = document.createElement('script');
+        s.src = 'https://cdn.onesignal.com/sdks/web/v16/OneSignalSDK.page.js'; s.defer = true;
+        s.onerror = function () { console.warn('OneSignal SDK load nahi hua'); };
+        (document.head || document.documentElement).appendChild(s);
+    }
+
+    /* Public API: Firebase auth state se call hota hai */
+    window.totaPushLogin = function (uid) {
+        if (!uid || linkedUid === uid) return;
+        wantUid = uid;
+        try { nativeLogin(uid); } catch (e) {}
+        window.OneSignalDeferred.push(function (OneSignal) { if (webReady && wantUid === uid && linkedUid !== uid) { try { OneSignal.login(uid); linkedUid = uid; } catch (e) {} } });
+        try { if (typeof window.onTotaLogin === 'function') window.onTotaLogin(uid); } catch (e) {}
+    };
+    window.totaPushLogout = function () {
+        wantUid = null; linkedUid = null;
+        try { nativeLogout(); } catch (e) {}
+        window.OneSignalDeferred.push(function (OneSignal) { if (webReady) { try { OneSignal.logout(); } catch (e) {} } });
+    };
+    /* Native wrapper late load hota hai to retry (login ke baad plugin ready hone par) */
+    document.addEventListener('deviceready', function () { if (wantUid) { var u = wantUid; linkedUid = null; window.totaPushLogin(u); } });
+})();
+</script>
+    <script>try{if(localStorage.getItem('tota_in')==='1')document.documentElement.classList.add('known')}catch(e){}</script>
+
+    <style>
+        :root { --bg:#060E24; --card:#0C1A3A; --card2:#112449; --line:#1C3562; --text:#EAF6FF; --muted:#8FA9C9; --accent:#00E5FF; --neon:#00E5FF; --gold:#FFC727; --red:#EF4444; --green:#36B89A; --grey:#4A6286; }
+        * { touch-action: manipulation; box-sizing: border-box; }
+        body { background: var(--bg); color: var(--text); font-family: 'Segoe UI', sans-serif; margin: 0; padding: 0; overflow-x: hidden; user-select: none; }
+
+        /* ---------- SPLASH ---------- */
+
+
+        /* ---------- SPLASH: logo todta hai, phir judta hai, phir screen khulti hai ---------- */
+        #splash { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 10000; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+        #splash::before, #splash::after { content: ""; position: absolute; left: 0; right: 0; height: 50.5%; background: var(--bg); transition: transform .8s cubic-bezier(.77,0,.18,1); }
+        #splash::before { top: 0; } #splash::after { bottom: 0; }
+        #splash.open { pointer-events: none; }
+        #splash.open::before { transform: translateY(-101%); } #splash.open::after { transform: translateY(101%); }
+        .sp-in { position: relative; z-index: 1; display: flex; flex-direction: column; align-items: center; transition: opacity .4s, transform .8s; }
+        #splash.open .sp-in { opacity: 0; transform: scale(1.18); }
+        .sp-in::before { content: ""; position: absolute; z-index: -1; width: 420px; height: 420px; top: -50px; left: 50%; margin-left: -210px; background: radial-gradient(circle, rgba(0,229,255,.16), transparent 65%); pointer-events: none; }
+        .sp-svg { width: 270px; max-width: 76vw; height: auto; display: block; overflow: visible; }
+        .sp-logo-g { animation: spShake 3.2s linear both; }
+        .p { transform-box: fill-box; transform-origin: center; animation: spBreak 3.2s both; }
+        .rg { fill: none; stroke-width: 3; opacity: 0; transform-box: fill-box; transform-origin: center; }
+        .r1 { stroke: #00E5FF; animation: spRingA 3.2s both; } .r2 { stroke: #00E5FF; animation: spRingB 3.2s both; }
+        .sp-sub { color: #00E5FF; font-size: 11px; letter-spacing: 5px; margin-top: 22px; font-weight: 700; animation: spSub 3.2s both; }
+        .sp-bar { width: 180px; height: 4px; background: var(--card2); border-radius: 10px; margin-top: 22px; overflow: hidden; }
+        .sp-fill { height: 100%; width: 0; background: linear-gradient(90deg, #00E5FF, #3B82F6); animation: spLoad 3.2s linear forwards; }
+        .wlogo { width: 150px; height: auto; display: block; margin: 0 auto; overflow: visible; }
+        @keyframes spBreak {
+            0% { opacity: 0; transform: scale(.5); }
+            9% { opacity: 1; transform: none; animation-timing-function: linear; }
+            29% { transform: none; animation-timing-function: cubic-bezier(.1,.8,.2,1); }
+            48% { transform: translate(var(--dx), var(--dy)) rotate(var(--r)) scale(1.1); opacity: .35; animation-timing-function: linear; }
+            56% { transform: translate(calc(var(--dx) * 1.06), calc(var(--dy) * 1.06)) rotate(calc(var(--r) * 1.08)) scale(1.1); opacity: .3; animation-timing-function: cubic-bezier(.5,0,.2,1.25); }
+            82%, 100% { transform: none; opacity: 1; }
+        }
+        @keyframes spShake { 0%, 17%, 29%, 100% { transform: none; } 19% { transform: translate(-2px,1px); } 21% { transform: translate(3px,-2px); } 23% { transform: translate(-4px,2px); } 25% { transform: translate(4px,3px); } 27% { transform: translate(-5px,-2px); } }
+        @keyframes spRingA { 0%, 29% { opacity: 0; transform: scale(.3); } 31% { opacity: .9; transform: scale(.3); } 62%, 100% { opacity: 0; transform: scale(2.4); } }
+        @keyframes spRingB { 0%, 82% { opacity: 0; transform: scale(.4); } 84% { opacity: .9; transform: scale(.4); } 100% { opacity: 0; transform: scale(2.2); } }
+        @keyframes spSub { 0%, 78% { opacity: 0; transform: translateY(6px); } 100% { opacity: 1; transform: none; } }
+        @keyframes spLoad { to { width: 100%; } }
+        @media (prefers-reduced-motion: reduce) { .p, .sp-logo-g, .rg, .sp-sub, .sp-fill { animation: none !important; } .rg { display: none; } .sp-sub { opacity: 1; } .sp-fill { width: 100%; } }
+/* ---------- LOADING SCREEN: dim page + ghoomta TOTA logo ring ---------- */
+        #ldr { position: fixed; top: 0; right: 0; bottom: 0; left: 0; z-index: 9000; display: flex; align-items: center; justify-content: center; background: rgba(4,10,28,.62); opacity: 0; visibility: hidden; pointer-events: none; transition: opacity .2s, visibility .2s; }
+        #ldr.show { opacity: 1; visibility: visible; } #ldr.block { pointer-events: auto; }
+        .ldr-c { position: relative; width: 78px; height: 78px; border-radius: 50%; background: #0A1632; display: grid; place-items: center; box-shadow: 0 0 30px rgba(0,229,255,.35); }
+        .ldr-c::before { content: ""; position: absolute; top: 0; right: 0; bottom: 0; left: 0; border-radius: 50%; background: conic-gradient(#00E5FF, #3B82F6 62%, transparent 64%); -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px)); mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px)); animation: ldrSpin .9s linear infinite; }
+        .ldr-c svg { width: 44px; height: auto; overflow: visible; animation: ldrPulse 1.4s ease-in-out infinite; }
+        @keyframes ldrSpin { to { transform: rotate(360deg); } }
+        @keyframes ldrPulse { 50% { transform: scale(.9); } }
+        @media (prefers-reduced-motion: reduce) { .ldr-c::before, .ldr-c svg { animation-duration: 3s; } }
+
+        .h-tabs { display: flex; gap: 8px; padding: 12px 15px 0; }
+        .h-tabs button { flex: 1; background: var(--card); border: 1px solid var(--line); color: var(--muted); padding: 10px 4px; border-radius: 10px; font-weight: 700; font-size: 12px; cursor: pointer; }
+        .h-tabs button.on { background: var(--accent); color: #04122E; border-color: var(--accent); }
+        .w-btn .ic { width: 16px; height: 16px; margin-right: 4px; vertical-align: -3px; }
+        .wh-t { color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: .5px; margin: 10px 0 2px; }
+
+        /* ---------- COMMON ---------- */
+        .header { padding: 15px; display: flex; justify-content: space-between; align-items: center; background: #0C1A3A; border-bottom: 1px solid #1C3562; position: sticky; top: 0; z-index: 1000; }
+        .btn-action { background: var(--neon); color: #000; border: none; padding: 12px 22px; border-radius: 8px; font-weight: 900; cursor: pointer; text-transform: uppercase; font-size: 11px; transition: 0.3s; flex-shrink: 0; }
+        .btn-action:disabled { opacity: .5; }
+
+        .filter-bar { display: flex; gap: 8px; padding: 12px 15px; background: #0A1632; overflow-x: auto; white-space: nowrap; position: sticky; top: 53px; z-index: 900; border-bottom: 1px solid #112449; }
+        .f-tab { background: #112449; color: #8FA9C9; border: 1px solid #1C3562; padding: 6px 14px; border-radius: 20px; font-size: 11px; font-weight: bold; cursor: pointer; }
+        .f-tab.active { background: var(--neon); color: #000; border-color: var(--neon); }
+
+        .match-card { background: var(--card); border-radius: 15px; margin: 15px; border: 1px solid #1C3562; overflow: hidden; position: relative; min-height: 235px; }
+        .m-badge { position: absolute; top: 0; right: 0; padding: 4px 12px; font-size: 9px; font-weight: 900; border-bottom-left-radius: 10px; z-index: 10; color: #fff; text-transform: uppercase; }
+        .bg-grey { background: var(--grey); } .bg-red { background: var(--red); } .bg-green { background: var(--green); }
+        .m-header { background: #112449; padding: 10px; text-align: center; border-bottom: 1px solid #1C3562; }
+        .m-time { font-size: 11px; color: var(--neon); font-weight: bold; margin-top: 4px; display: block; }
+        .m-main { display: flex; padding: 12px; gap: 12px; align-items: center; }
+        .m-thumb { width: 90px; height: 90px; border-radius: 12px; background-size: cover; background-position: center; border: 2px solid #1C3562; flex-shrink: 0; }
+
+        .prize-pool { flex: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+        .p-box { background: rgba(0,229,255,0.05); padding: 5px; border-radius: 6px; text-align: center; border: 0.5px solid rgba(0,229,255,0.1); }
+        .p-label { font-size: 8px; color: #8FA9C9; text-transform: uppercase; display: block; }
+        .p-val { font-size: 11px; font-weight: 900; color: var(--neon); }
+
+        .m-footer { padding: 12px; background: #0C1A3A; border-top: 1px solid #1C3562; display: flex; flex-direction: column; gap: 8px; }
+        .m-progress { flex: 1; height: 6px; background: #0A1632; border-radius: 10px; overflow: hidden; position: relative; }
+        .m-fill { height: 100%; background: var(--neon); transition: 0.5s; }
+        .min-alert { font-size: 11px; color: var(--gold); text-align: center; }
+
+        .overlay { position: fixed; top: 0; left: 100%; width: 100%; height: 100%; background: var(--bg); z-index: 2000; transition: 0.3s ease; overflow-y: auto; }
+        .overlay-active { left: 0 !important; }
+
+        input { width: 100%; padding: 14px; margin: 8px 0; background: #0A1632; border: 1px solid #1C3562; border-radius: 10px; color: white; outline: none; box-sizing: border-box; font-size: 13px; user-select: text; }
+
+        .nav { position: fixed; bottom: 0; width: 100%; background: #040A1C; display: flex; justify-content: space-around; padding: 12px 0; border-top: 1px solid #1C3562; z-index: 1000; }
+        .nav-item { color: #8FA9C9; font-size: 10px; text-align: center; cursor: pointer; font-weight: bold; }
+        .nav-active { color: var(--neon); }
+        .page { display: none; padding-bottom: 70px; } .active-page { display: block; }
+.history-item { background: #0A1632; padding: 12px; margin-bottom: 8px; border-radius: 10px; display: flex; justify-content: space-between; border-left: 4px solid var(--neon); align-items: center; }
+        .gateway-card { background: var(--card); border: 1px solid #1C3562; border-radius: 16px; padding: 20px; max-width: 380px; margin: 15px auto; box-shadow: 0 10px 30px rgba(0,0,0,0.6); }
+        .qr-clean { width: 100%; max-height: 200px; object-fit: contain; border-radius: 10px; display: block; margin: 10px 0; background: #fff; padding: 8px; }
+
+        .insta-tag { color: #00E5FF; font-weight: 900; font-size: 15px; text-transform: lowercase; margin: 10px 0; display: block; text-align: center; }
+        .hidden { display: none !important; }
+
+        /* ---------- AUTH (Welcome / Login / Register) ---------- */
+        #authPage { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: var(--bg); z-index: 5000; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; padding: 50px 20px 20px; overflow-y: auto; }
+        .a-screen { display: none; width: 100%; max-width: 380px; }
+        .a-screen.show { display: block; }
+        .a-title { font-size: 30px; font-weight: 900; line-height: 1.2; margin: 0 0 25px; text-align: left; }
+        .a-title span { color: var(--neon); }
+        .a-in { background: #0C1A3A !important; border: 1px solid #1C3562 !important; border-radius: 30px !important; padding: 16px 22px !important; margin: 6px 0 !important; }
+        .a-in:focus { border-color: var(--neon) !important; box-shadow: 0 0 10px rgba(0,229,255,.25); }
+        .a-row { display: flex; gap: 8px; }
+        .a-row input:first-child { width: 90px; flex-shrink: 0; }
+        .a-main { width: 100%; padding: 16px; border-radius: 30px; margin-top: 14px; font-size: 13px; }
+        .a-link { text-align: center; font-size: 12px; color: #aaa; margin-top: 18px; }
+        .a-link b { color: var(--neon); cursor: pointer; }
+        .a-note { font-size: 10px; color: #8FA9C9; text-align: center; margin-top: 14px; line-height: 1.6; }
+        .a-note b { color: #fff; }
+
+        /* ---------- WALLET ---------- */
+        .w-card { background: var(--card); margin: 15px; border-radius: 20px; border: 1px solid #1C3562; padding: 5px 20px; }
+        .w-row { display: flex; justify-content: space-between; align-items: center; padding: 16px 0; border-bottom: 1px solid #1C3562; }
+        .w-row:last-of-type { border-bottom: none; }
+        .w-lbl { font-size: 12px; color: #8FA9C9; display: block; margin-bottom: 4px; }
+        .w-num { font-size: 26px; font-weight: 900; color: var(--text); }
+        .w-btn { border: none; border-radius: 10px; padding: 12px 20px; min-width: 130px; font-weight: 900; font-size: 12px; cursor: pointer; }
+        .w-dark { background: #112449; color: var(--neon); border: 1px solid #1C3562; }
+        .w-neon { background: var(--neon); color: #000; }
+        .w-green { background: var(--green); color: #04122E; }
+        .w-gold { background: linear-gradient(90deg, #00E5FF, #FFB300); color: #000; }
+        .w-foot { text-align: center; font-size: 11px; color: #8FA9C9; padding: 12px 0; }
+
+        .sp-img { width: 230px; max-width: 70%; animation: spPop 1s ease, spFloat 2.5s ease-in-out infinite 1s; filter: drop-shadow(0 0 18px rgba(0,229,255,.35)); }
+        @keyframes spFloat { 0%,100% { transform: translateY(0) } 50% { transform: translateY(-8px) } }
+        .wl-img { width: 170px; max-width: 60%; filter: drop-shadow(0 0 14px rgba(0,229,255,.3)); }
+/* ---------- HOME / MATCHES v2 ---------- */
+        .hbtn { background: transparent; border: 1px solid rgba(0,229,255,.5); color: var(--gold); border-radius: 20px; padding: 7px 12px; font-size: 10px; font-weight: 900; letter-spacing: 1.5px; cursor: pointer; }
+        .wpill { background: linear-gradient(90deg, #00E5FF, #FFB300); color: #000; font-weight: 900; border-radius: 20px; padding: 7px 8px 7px 14px; display: flex; gap: 10px; align-items: center; cursor: pointer; }
+        .wpill b { background: #000; color: var(--gold); border-radius: 50%; width: 20px; height: 20px; display: grid; place-items: center; font-size: 14px; }
+        .notice { margin: 12px 15px; padding: 10px 14px; border-radius: 10px; background: rgba(0,229,255,.07); border: 1px solid rgba(0,229,255,.2); color: var(--gold); font-size: 12px; text-align: center; letter-spacing: .5px; }
+        .sec-t { margin: 18px 15px 10px; color: var(--gold); letter-spacing: 2px; font-size: 14px; }
+        .sec-t small { display: block; color: #8FA9C9; font-size: 10px; letter-spacing: .5px; margin-top: 3px; font-weight: 400; }
+        .tiles { display: flex; gap: 10px; padding: 0 15px; }
+        .tile { flex: 1; background: linear-gradient(160deg, #0C1A3A, #091330); border: 1px solid rgba(0,229,255,.2); border-radius: 14px; padding: 18px 6px; text-align: center; cursor: pointer; }
+        .tile b { display: block; font-size: 26px; color: var(--gold); }
+        .tile span { font-size: 11px; font-weight: bold; letter-spacing: 1px; }
+        .cat-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 0 15px; }
+        .cat { background: #091330; border: 1px solid #1C3562; border-radius: 12px; overflow: hidden; cursor: pointer; }
+        .cat-img { height: 88px; background-size: cover; background-position: center; background-color: #0C1A3A; }
+        .cat-name { text-align: center; font-size: 10px; font-weight: bold; padding: 8px 2px; letter-spacing: 1px; }
+        .mp-head { display: flex; justify-content: space-between; align-items: center; padding: 15px; background: #0C1A3A; position: sticky; top: 0; z-index: 1000; border-bottom: 1px solid rgba(0,229,255,.25); }
+        .m-banner { height: 140px; background-size: cover; background-position: center; background-color: #091330; }
+        .m-tags { display: flex; gap: 8px; padding: 12px 12px 0; }
+        .tag { background: rgba(0,229,255,.1); color: var(--neon); border: 1px solid rgba(0,229,255,.3); padding: 3px 10px; border-radius: 6px; font-size: 10px; font-weight: bold; }
+        .tag.t2 { background: rgba(0,229,255,.1); color: var(--gold); border-color: rgba(0,229,255,.3); }
+        .m-title { padding: 10px 12px 8px; font-weight: 900; font-size: 14px; letter-spacing: .5px; }
+        .m-win { margin: 4px 12px 8px; padding: 10px 12px; border-radius: 10px; background: rgba(45,190,116,.12); border: 1px solid rgba(45,190,116,.4); display: flex; align-items: center; gap: 10px; }
+        .m-win small { color: #8FA9C9; font-size: 9px; letter-spacing: 2px; } .m-win b { flex: 1; color: var(--gold); } .m-win span { color: var(--green); font-weight: 900; }
+        .rt { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 12px; }
+        .rt th { background: #112449; padding: 10px 4px; text-align: center; }
+        .rt .rt-t { background: #112449; font-size: 13px; }
+        .rt td { background: #fff; color: #112449; text-align: center; padding: 10px 4px; border-bottom: 1px solid #ddd; }
+
+        /* ---------- JOIN / ACCOUNT / POPUPS ---------- */
+        .jcard { background: linear-gradient(160deg, #0C1A3A, #091330); border: 1px solid rgba(0,229,255,.25); border-radius: 14px; padding: 14px; display: grid; gap: 8px; font-size: 13px; }
+        .jcard div { display: flex; justify-content: space-between; color: #aaa; } .jcard b { color: var(--gold); }
+        .pos-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin: 10px 0 14px; }
+        .pos { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px 0; background: #0A1632; border: 1px solid #1C3562; border-radius: 10px; cursor: pointer; transition: .15s; }
+        .pos input { display: none; } .pos i { width: 18px; height: 18px; border: 2px solid var(--gold); border-radius: 5px; display: block; }
+        .pos input:checked + i { background:var(--accent); box-shadow: 0 0 8px var(--gold); } .pos.off { opacity: .3; pointer-events: none; }
+        .jbox { background: #0A1632; border: 1px solid rgba(0,229,255,.25); border-radius: 14px; padding: 6px 14px 12px; margin: 14px 0 4px; }
+        .jbox label { font-size: 10px; color: var(--neon); letter-spacing: 2px; font-weight: bold; display: block; margin-top: 10px; }
+        .tnc { margin-top: 18px; padding: 14px; border-radius: 12px; background: rgba(255,49,49,.07); border: 1px dashed var(--red); font-size: 11px; color: #ccc; line-height: 1.7; } .tnc b { color: var(--red); letter-spacing: 1px; }
+        .acc-top { text-align: center; padding: 24px 15px 10px; background: radial-gradient(circle at top, rgba(0,229,255,.12), transparent 70%); }
+        .acc-av { width: 78px; height: 78px; border-radius: 50%; margin: 0 auto; display: grid; place-items: center; font-size: 30px; font-weight: 900; color: #000; background: linear-gradient(135deg, #00E5FF, #00E5FF); box-shadow: 0 0 22px rgba(0,229,255,.35); }
+        .acc-stats { display: flex; margin: 14px 15px; background: #0A1632; border-radius: 14px; border: 1px solid rgba(0,229,255,.2); }
+        .acc-stats div { flex: 1; text-align: center; padding: 14px 4px; } .acc-stats b { display: block; font-size: 20px; color: var(--gold); } .acc-stats span { font-size: 10px; color: #8FA9C9; }
+        .mi { display: flex; justify-content: space-between; align-items: center; margin: 8px 15px; padding: 15px; background: #0A1632; border-radius: 12px; border-left: 3px solid var(--gold); font-weight: bold; font-size: 13px; cursor: pointer; transition: transform .15s; } .mi i { color: var(--gold); font-style: normal; font-size: 20px; }
+        .sup-row { display: flex; justify-content: space-between; align-items: center; padding: 16px; margin-bottom: 10px; background: #0A1632; border-radius: 12px; border-left: 3px solid var(--neon); color: #fff; text-decoration: none; } .sup-row span { color: #8FA9C9; font-size: 12px; } .sup-row b { color: var(--neon); }
+        .pop-bg { position: fixed; top: 0; right: 0; bottom: 0; left: 0; background: rgba(0,0,0,.7); z-index: 20000; display: none; align-items: center; justify-content: center; padding: 25px; } .pop-bg.show { display: flex; }
+        .pop { width: 100%; max-width: 330px; background: linear-gradient(160deg, #0C1A3A, #0d1117); border-radius: 18px; padding: 0 18px 18px; text-align: center; overflow: hidden; border: 1px solid #1C3562; animation: popIn .25s ease; font-size: 14px; }
+        .pop-bar { height: 5px; margin: 0 -18px 12px; }
+        @keyframes popIn { from { transform: scale(.8); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+        .toast { position: fixed; bottom: 90px; left: 50%; transform: translate(-50%, 20px); background: linear-gradient(90deg, #ff9100, #ff3131); color: #fff; font-weight: bold; font-size: 12px; padding: 11px 20px; border-radius: 25px; z-index: 20001; opacity: 0; pointer-events: none; transition: .25s; } .toast.show { opacity: 1; transform: translate(-50%, 0); }
+        .btn-action:active, .w-btn:active, .tile:active, .cat:active, .mi:active, .hbtn:active, .pos:active { transform: scale(.95); }
+        .match-card, .cat, .tile { animation: cardIn .35s ease both; } @keyframes cardIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+/* ---------- PRO THEME: flat, one accent ---------- */
+        html, body { background: var(--bg); }
+        body { font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif; }
+        .ic { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; vertical-align: -4px; flex-shrink: 0; }
+        html.known #mainApp.hidden { display: block !important; }
+
+        .header { background: var(--bg); border-bottom: 1px solid var(--line); padding: 12px 14px; }
+        .h-user { display: flex; align-items: center; gap: 10px; cursor: pointer; min-width: 0; }
+        .h-av { width: 42px; height: 42px; border-radius: 50%; overflow: hidden; border: 2px solid var(--line); background: var(--card2); display: grid; place-items: center; font-weight: 900; color: #fff; flex-shrink: 0; }
+        .h-av svg, .h-av img { width: 100%; height: 100%; display: block; object-fit: cover; }
+        .h-user b { display: block; font-size: 15px; color: #fff; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .h-user small { color: var(--neon); font-size: 11px; font-weight: 700; letter-spacing: .5px; }
+        .h-right { display: flex; gap: 10px; align-items: center; }
+        .h-ic { width: 40px; height: 40px; border-radius: 50%; background: var(--card); border: 1px solid var(--line); color: var(--neon); display: grid; place-items: center; cursor: pointer; padding: 0; }
+        .wpill { background: var(--accent); color: #04122E; border-radius: 22px; padding: 0 12px; height: 40px; display: flex; align-items: center; gap: 10px; font-weight: 800; cursor: pointer; }
+        .wpill i { width: 1px; height: 18px; background: rgba(255,255,255,.5); }
+
+        .btn-action { background: var(--accent); color: #04122E; border-radius: 10px; letter-spacing: .8px; box-shadow: none; }
+        .hbtn { background: transparent; border: 1px solid var(--accent); color: var(--neon); }
+        input:focus { border-color: var(--accent) !important; box-shadow: none !important; }
+        .a-title span { color: var(--neon); }
+
+        .notice { display: flex; align-items: center; gap: 10px; background: var(--card); border: 1px solid var(--line); color: #fff; text-align: left; font-size: 13px; letter-spacing: 0; border-radius: 12px; }
+        .notice .ic { color: var(--neon); }
+        .sec-t { color: var(--neon); letter-spacing: .5px; font-size: 15px; font-weight: 800; }
+        .sec-t small { color: var(--muted); }
+        .posters { margin: 4px 0 8px; }
+        .p-track { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory; padding: 0 15px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+        .p-track::-webkit-scrollbar { display: none; }
+        .p-item { flex: 0 0 100%; scroll-snap-align: center; aspect-ratio: 16/7; border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: var(--card); }
+        .p-item img { width: 100%; height: 100%; object-fit: cover; display: block; }
+        .p-dots { display: flex; justify-content: center; gap: 6px; margin-top: 8px; }
+        .p-dots i { width: 6px; height: 6px; border-radius: 3px; background: var(--line); transition: .2s; }
+        .p-dots i.on { width: 18px; background: var(--accent); }
+
+        .tile { position: relative; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 18px 6px 14px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+        .tile .ic { width: 34px; height: 34px; color: var(--neon); stroke-width: 1.7; }
+        .tile span { font-size: 13px; font-weight: 700; letter-spacing: 0; color: #fff; }
+        .tile b { position: absolute; top: 8px; right: 8px; display: grid; place-items: center; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 10px; background: var(--accent); color: #04122E; font-size: 11px; }
+        .cat { background: var(--card); border: 1px solid var(--line); } .cat-name { letter-spacing: .3px; }
+
+        .mp-head { background: var(--bg); border-bottom: 1px solid var(--line); }
+        .filter-bar { background: var(--bg); border-bottom: 1px solid var(--line); }
+        .f-tab { background: transparent; border: 1px solid var(--line); color: var(--muted); letter-spacing: 1px; font-size: 10px; padding: 8px 16px; }
+        .f-tab.active { background: var(--accent); color: #04122E; border-color: var(--accent); box-shadow: none; }
+        .match-card { background: var(--card); border: 1px solid var(--line); box-shadow: none; }
+        .m-header { background: var(--card2); border-bottom: 1px solid var(--line); }
+        .m-badge { letter-spacing: 1.5px; padding: 5px 14px; box-shadow: none; }
+        .bg-grey { background: var(--grey); } .bg-red { background: var(--red); } .bg-green { background: var(--green); }
+        .p-box { background: var(--card2); border: 1px solid var(--line); } .p-val { color: #fff; }
+        .m-fill { background: var(--accent); }
+        .m-footer { background: var(--card); border-top: 1px solid var(--line); }
+        .tag, .tag.t2 { background: var(--card2); color: var(--neon); border: 1px solid var(--line); }
+        .m-win { background: rgba(45,190,116,.12); border: 1px solid rgba(45,190,116,.4); }
+.nav { background: var(--card); border-top: 1px solid var(--line); padding: 0 0 env(safe-area-inset-bottom); }
+        .nav-item { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 9px 0; flex: 1; letter-spacing: .3px; border-top: 0; font-size: 11px; color: var(--muted); background: none; }
+        .nav-item .ic { width: 23px; height: 23px; }
+        .nav-item.nav-active { color: var(--neon); border-top: 0; background: none; }
+
+        .w-card { background: var(--card); border: 1px solid var(--line); }
+        .w-row { border-bottom: 1px solid var(--line); }
+        .w-lbl { color: var(--muted); } .w-lbl .ic { width: 16px; height: 16px; margin-right: 4px; color: var(--neon); vertical-align: -3px; }
+        .w-num { color: #fff; }
+        .w-sub { font-size: 11px; color: var(--muted); margin-top: 3px; display: block; }
+        .w-btn { border-radius: 10px; letter-spacing: .5px; }
+        .w-neon { background: var(--accent); color: #04122E; }
+        .w-dark, .w-green, .w-gold { background: transparent; color: var(--neon); border: 1px solid var(--accent); }
+        .history-item { background: var(--card); border: 1px solid var(--line); }
+        .empty { color: var(--muted); font-size: 12px; text-align: center; margin: 20px 0; }
+
+        .acc-top { background: none; }
+        .acc-av { width: 84px; height: 84px; background: var(--card2); color: #fff; box-shadow: none; border: 3px solid var(--accent); overflow: hidden; }
+        .acc-av svg, .acc-av img { width: 100%; height: 100%; display: block; object-fit: cover; }
+        .acc-stats { background: var(--card); border: 1px solid var(--line); } .acc-stats b { color: #fff; }
+        .mi { background: var(--card); border: 1px solid var(--line); font-weight: 600; }
+        .mi-t { display: flex; align-items: center; gap: 12px; } .mi-t .ic { color: var(--neon); } .mi i { color: var(--muted); }
+        .sup-row { background: var(--card); border: 1px solid var(--line); gap: 12px; justify-content: flex-start; }
+        .sup-row .sup-ic { width: 42px; height: 42px; border-radius: 12px; background: var(--card2); color: var(--neon); display: grid; place-items: center; flex-shrink: 0; font-size: inherit; }
+        .sup-row div { flex: 1; min-width: 0; display: block; }
+        .sup-row b { display: block; color: #fff; font-size: 15px; }
+        .sup-row small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; }
+        .sup-row i { color: var(--muted); font-style: normal; font-size: 20px; }
+
+        .jcard { background: var(--card); border: 1px solid var(--line); }
+        .jbox { background: var(--card2); border: 1px solid var(--line); } .jbox label { color: var(--neon); letter-spacing: 1px; }
+        .pos input:checked + i { background: var(--accent); box-shadow: none; border-color: var(--accent); } .pos i { border-color: var(--neon); }
+        .pop { background: var(--card); border: 1px solid var(--line); }
+        .toast { background: var(--accent); }
+        .gateway-card { background: var(--card); border: 1px solid var(--line); box-shadow: none; }
+        .insta-tag { color: var(--neon); }
+
+        .av-label { color: var(--muted); font-size: 12px; margin: 2px 0 6px; font-weight: 700; }
+        .av-pick { display: flex; gap: 12px; margin-bottom: 10px; }
+        .av-opt { flex: 1; background: var(--card); border: 2px solid var(--line); border-radius: 16px; padding: 10px 6px; color: #fff; display: flex; flex-direction: column; align-items: center; gap: 6px; font-weight: 700; font-size: 12px; cursor: pointer; }
+        .av-opt span { width: 84px; height: 84px; border-radius: 50%; overflow: hidden; display: block; }
+        .av-opt svg, .av-opt img { width: 100%; height: 100%; display: block; object-fit: cover; }
+        .av-opt.on { border-color: var(--accent); background: var(--card2); }
+
+        .upi-grid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin: 10px 0 14px; }
+        .upi-opt { background: var(--card); border: 2px solid var(--line); border-radius: 14px; padding: 12px 4px; color: #fff; font-size: 12px; font-weight: 700; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+        .upi-opt em { font-style: normal; width: 34px; height: 34px; border-radius: 50%; background: var(--card2); color: var(--neon); display: grid; place-items: center; font-weight: 900; font-size: 13px; }
+        .upi-opt.on { border-color: var(--accent); background: var(--card2); }
+        .wd-lbl { text-align: left; color: var(--muted); font-size: 12px; font-weight: 700; margin-top: 6px; display: block; }
+        .wd-note { text-align: left; color: var(--muted); font-size: 11px; margin: 2px 0 10px; }
+        .rz { margin: 0 12px 10px; background: var(--card2); border: 1px solid var(--line); border-radius: 10px; cursor: pointer; }
+        .rz-h { display: flex; align-items: center; gap: 8px; padding: 10px 12px; font-size: 12px; font-weight: 700; }
+        .rz-h span { flex: 1; } .rz-h b { color: var(--neon); }
+        .rz-h .ic { width: 18px; height: 18px; transition: transform .25s; }
+        .rz.open .rz-h .ic { transform: rotate(180deg); }
+        .rz-b { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .3s ease; }
+        .rz.open .rz-b { grid-template-rows: 1fr; }
+        .rz-b > div { overflow: hidden; }
+        .rz-r { display: flex; justify-content: space-between; padding: 8px 12px; border-top: 1px solid var(--line); font-size: 12px; } .rz-r b { color: #fff; }
+    .p-slide{flex:0 0 100%;scroll-snap-align:center}.p-slide .p-item{flex:none;width:100%}
+.p-bar{display:flex;justify-content:flex-end;padding-top:6px}.p-view{background:var(--accent);color:#04122E;border:0;border-radius:14px;padding:5px 14px;font-size:11px;font-weight:800;cursor:pointer}
+.co-t{margin-top:4px;font-size:12px;font-weight:800;color:var(--gold);font-variant-numeric:tabular-nums}
+
+.w-white{background:#fff!important;color:#04122E!important;border:0!important}.w-yel{background:#FFC727!important;color:#1a1200!important;border:0!important}
+.w-green{background:var(--green)!important;color:#04122E!important;border:0!important}.w-red{background:#EF4444!important;color:#fff!important;border:0!important}.w-plus{background:#8B7BE8!important;color:#fff!important;border:0!important}
+.bg-grey{background:#C3CBD9;color:#0A1632}.bg-green{background:#8B5CF6;color:#fff}
+.match-card{border:1.5px solid rgba(0,229,255,.6)!important;box-shadow:0 0 0 1px rgba(0,229,255,.12),0 0 18px rgba(0,229,255,.14)}
+.p-view{background:#fff;color:#04122E;border:2px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.45);padding:6px 16px;font-size:12px}
+.notice{display:flex;align-items:center;gap:8px}.notice span{flex:1}.rl-view{background:#fff;color:#04122E;border:0;border-radius:12px;padding:5px 14px;font-size:11px;font-weight:900;cursor:pointer;flex-shrink:0}
+.co-t{font-size:18px;font-weight:900;margin-top:6px;color:var(--gold)}.co-n{font-size:14px;font-weight:800;margin-top:5px}
+
+.pl-row{padding:0 12px 10px}.pl-row b{font-size:11px;color:var(--muted)}.pl-row div{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}.pl-row span{background:var(--card2);border:1px solid var(--line);border-radius:12px;padding:3px 10px;font-size:11px}
+
+/* ---------- POPUPS: UPI ask / deposit needed / payment success ---------- */
+#upiAsk,#depNeed{position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:9500;align-items:center;justify-content:center;padding:24px}
+.tpop{width:100%;max-width:330px;background:var(--card);border:1px solid var(--line);border-radius:18px;padding:22px 18px 18px;text-align:center;animation:tpIn .25s ease}
+.tpop h3{color:var(--neon);margin:0 0 8px;font-size:17px}.tpop p{color:var(--muted);font-size:13px;line-height:1.6;margin:0 0 16px}
+.tpop .row{display:flex;gap:10px}.tpop button{flex:1;padding:13px 8px;border-radius:12px;font-family:inherit;font-weight:800;font-size:13px;letter-spacing:.6px;cursor:pointer;transition:transform .12s}
+.tpop button:active{transform:scale(.96)}
+.tpop button.ghost{background:rgba(239,68,68,.10);border:1.5px solid #EF4444;color:#FF7A7A}
+.tpop button.pri{background:linear-gradient(135deg,#2EE59D,#0B9E63);border:none;color:#04221A;box-shadow:0 6px 18px rgba(11,158,99,.35)}
+.tpop button.gold{background:linear-gradient(135deg,#FFD65A,#FFA800);border:none;color:#2A1B00;box-shadow:0 6px 18px rgba(255,168,0,.3)}
+.tpop button.dim{background:transparent;border:1.5px solid var(--line);color:var(--muted)}
+@keyframes tpIn{from{transform:scale(.9);opacity:0}to{transform:scale(1);opacity:1}}
+#paySuccess{position:fixed;inset:0;z-index:9800;align-items:center;justify-content:center;flex-direction:column;overflow:hidden;color:#fff;text-align:center}
+#paySuccess .fill{position:absolute;left:50%;top:50%;width:20px;height:20px;margin:-10px 0 0 -10px;border-radius:50%;background:radial-gradient(circle at 50% 40%,#2EE59D,#0B9E63 70%);transform:scale(0);animation:psFill .75s cubic-bezier(.2,.8,.2,1) forwards}
+@keyframes psFill{to{transform:scale(220)}}
+#paySuccess .ring{position:absolute;left:50%;top:50%;width:120px;height:120px;margin:-60px 0 0 -60px;border-radius:50%;border:3px solid rgba(255,255,255,.7);opacity:0;animation:psRing 1.4s .7s ease-out infinite}
+@keyframes psRing{0%{transform:scale(.8);opacity:.9}100%{transform:scale(2.6);opacity:0}}
+#paySuccess .chk{position:relative;width:104px;height:104px;border-radius:50%;background:#fff;display:grid;place-items:center;transform:scale(0);animation:psPop .5s .55s cubic-bezier(.3,1.6,.5,1) forwards;box-shadow:0 12px 40px rgba(0,0,0,.25)}
+@keyframes psPop{to{transform:scale(1)}}
+#paySuccess .chk path{fill:none;stroke:#0B9E63;stroke-width:8;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:60;stroke-dashoffset:60;animation:psDraw .45s 1s ease forwards}
+@keyframes psDraw{to{stroke-dashoffset:0}}
+#paySuccess h2{position:relative;margin:26px 0 6px;font-size:24px;opacity:0;animation:psUp .5s 1.15s forwards}
+#paySuccess p{position:relative;margin:0;font-size:13px;opacity:0;padding:0 30px;animation:psUp .5s 1.3s forwards}
+@keyframes psUp{from{transform:translateY(14px);opacity:0}to{transform:translateY(0);opacity:.95}}
+#paySuccess i{position:absolute;width:8px;height:8px;border-radius:2px;opacity:0;animation:psConf 1.3s 1s ease-out forwards}
+@keyframes psConf{0%{opacity:1;transform:translate(0,0) rotate(0)}100%{opacity:0;transform:translate(var(--x),var(--y)) rotate(360deg)}}
+
+        /* =====================================================================
+           SAFE-AREA / WEBVIEW FIX  (status bar, notch, gesture/nav bar)
+           --app-top / --app-bottom: Android (native) se aane wali fallback values.
+           Agar env() 0 de, to native code window.setSafeInsets() se px bhej sakta hai.
+           ===================================================================== */
+        :root {
+            --app-top: 0px; --app-bottom: 0px; --app-left: 0px; --app-right: 0px;
+            --sat: max(env(safe-area-inset-top, 0px), var(--app-top));
+            --sab: max(env(safe-area-inset-bottom, 0px), var(--app-bottom));
+            --sal: max(env(safe-area-inset-left, 0px), var(--app-left));
+            --sar: max(env(safe-area-inset-right, 0px), var(--app-right));
+        }
+        html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; -webkit-tap-highlight-color: transparent; background: var(--bg); }
+        body { min-height: 100vh; min-height: 100dvh; }
+        img, video, canvas { max-width: 100%; }
+
+        /* Top headers: status bar ke neeche se shuru */
+        .header { padding-top: calc(12px + var(--sat)); padding-left: calc(14px + var(--sal)); padding-right: calc(14px + var(--sar)); }
+        .mp-head { padding-top: calc(15px + var(--sat)); padding-left: calc(15px + var(--sal)); padding-right: calc(15px + var(--sar)); }
+        .filter-bar { top: calc(53px + var(--sat)); padding-left: calc(15px + var(--sal)); }
+        .overlay .filter-bar { top: calc(47px + var(--sat)) !important; }
+        .h-tabs { padding-left: calc(15px + var(--sal)); padding-right: calc(15px + var(--sar)); }
+
+        /* Bottom nav: gesture bar / 3-button nav ke upar */
+        .nav { padding: 0 var(--sar) var(--sab) var(--sal); }
+        .nav-item { min-height: 48px; justify-content: center; }
+        .page { padding-bottom: calc(76px + var(--sab)); }
+        .toast { bottom: calc(90px + var(--sab)); max-width: 90vw; text-align: center; }
+
+        /* Full-screen overlays: poora screen, aur andar ka content safe rahe */
+        .overlay { top: 0; bottom: 0; height: auto; padding-bottom: var(--sab); -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+        #authPage { padding-top: calc(50px + var(--sat)); padding-bottom: calc(20px + var(--sab)); padding-left: calc(20px + var(--sal)); padding-right: calc(20px + var(--sar)); }
+        .pop-bg { padding: calc(25px + var(--sat)) calc(25px + var(--sar)) calc(25px + var(--sab)) calc(25px + var(--sal)); }
+        #upiAsk, #depNeed { padding: calc(24px + var(--sat)) calc(24px + var(--sar)) calc(24px + var(--sab)) calc(24px + var(--sal)); }
+
+        /* Touch targets: buttons aasani se dab sakein */
+        .btn-action, .w-btn, .a-main, .h-tabs button, .tpop button { min-height: 44px; }
+        .h-ic { min-width: 40px; min-height: 40px; }
+        button, .nav-item, .f-tab, .btn-action, .w-btn { touch-action: manipulation; }
+
+        /* Chhoti screens (<= 360px) */
+        @media (max-width: 360px) {
+            .w-btn { min-width: 0; padding: 12px 14px; }
+            .btn-action { padding: 12px 14px; }
+            .nav-item { font-size: 10px; }
+            .gateway-card { margin: 10px; padding: 16px; }
+        }
+        /* Landscape: notch left/right me aa sakta hai (already --sal/--sar se handle) */
+    
+        /* =====================================================================
+           PULL-TO-REFRESH CONTROL
+           Native/browser pull-to-refresh poore app mein band; sirf Home par custom (lamba pull) chalega.
+           ===================================================================== */
+        html, body { overscroll-behavior-y: none; overscroll-behavior-x: none; }
+        .overlay, #authPage, .filter-bar { overscroll-behavior: contain; }
+        #ptr { position: fixed; left: 50%; top: calc(var(--sat) + 8px); z-index: 9400; display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-radius: 22px; background: var(--card2); color: var(--neon); border: 1px solid var(--line); font-size: 12px; font-weight: 800; letter-spacing: .5px; box-shadow: 0 6px 20px rgba(0,0,0,.45); opacity: 0; pointer-events: none; transform: translate(-50%, -70px); will-change: transform, opacity; }
+        #ptr.go { color: var(--gold); border-color: var(--gold); }
+        #ptr .ptr-arrow { display: inline-block; transition: transform .15s; }
+        #ptr.go .ptr-arrow { transform: rotate(180deg); }
+        #ptr.spin .ptr-arrow { animation: ldrSpin .8s linear infinite; }
+        #ptr.anim { transition: transform .2s, opacity .2s; }
+    
+        /* =====================================================================
+           UNIVERSAL RESPONSIVE + SAFE-AREA LAYER (har page, har phone)
+           --app-top / --app-bottom (JS se) aur env(safe-area-inset-*) dono se --sat / --sab bante hain.
+           ===================================================================== */
+        *, *::before, *::after { box-sizing: border-box; }
+        /* Scroll: sirf html (viewport) par overflow-x; body ko natural rakho taaki WebView mein vertical scroll kabhi na ruke */
+        html { width: 100%; max-width: 100vw; height: auto; min-height: 100%; overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+        body { width: 100%; max-width: 100vw; height: auto; overflow: visible; position: relative; }
+        body { overflow-wrap: break-word; word-wrap: break-word; }
+        #mainApp, .page, .overlay, #authPage, .header, .mp-head, .nav { width: 100%; max-width: 100vw; }
+        .overlay { overflow-x: hidden; }
+        img, video, canvas, iframe, table { max-width: 100%; }
+        img, video { height: auto; }
+        input, select, textarea, button { max-width: 100%; font-family: inherit; }
+        textarea, select { width: 100%; }
+        table { display: block; overflow-x: auto; }
+        .h-user b { max-width: min(130px, 36vw); }
+        .match-card, .gateway-card, .history-item, .jcard, .tile, .cat, .mi { max-width: 100%; min-width: 0; }
+        .history-item > div { min-width: 0; overflow-wrap: anywhere; }
+
+        /* Inline-style wale overlay headers (History, Match Result, Deposit, Redeem, Withdraw) - sab par safe-area */
+        .overlay > div:first-child:not(.mp-head):not([id]) {
+            padding-top: calc(15px + var(--sat)) !important;
+            padding-left: calc(15px + var(--sal)) !important;
+            padding-right: calc(15px + var(--sar)) !important;
+        }
+        /* Overlay ke andar ka baaki content: left/right notch se bachao, neeche nav bar se upar */
+        .overlay > div:not(:first-child):not(.mp-head):not(.filter-bar) { padding-left: max(var(--sal), 0px); padding-right: max(var(--sar), 0px); }
+        .overlay::after { content: ""; display: block; height: calc(var(--sab) + 12px); }
+
+        /* Back buttons / header actions: bada touch area */
+        .overlay > div:first-child b[onclick], .mp-head b[onclick] { display: inline-flex; align-items: center; gap: 4px; min-height: 44px; min-width: 44px; padding: 0 6px 0 0; }
+        .overlay > div:first-child b[onclick] .ic, .mp-head b[onclick] .ic { flex-shrink: 0; }
+
+        /* Touch targets: har clickable ke liye minimum size */
+        button, [onclick], .btn-action, .w-btn, .a-main, .f-tab, .nav-item, .mi, .tile, .cat, .pos, .h-ic, .p-view, .av-opt, input[type="button"], input[type="submit"] { min-height: 44px; }
+        button, .btn-action, .w-btn, .f-tab, .h-ic, .p-view { min-width: 44px; }
+        .f-tab, .p-view { display: inline-flex; align-items: center; justify-content: center; }
+        .pos { min-width: 44px; }
+        .nav-item { min-width: 0; }
+        .history-item .btn-action { min-height: 40px; }
+        a { -webkit-tap-highlight-color: transparent; }
+        a.sup-row { min-height: 52px; }
+        /* Chhoti screens mein 16px input = zoom nahi, aur lamba text wrap */
+        input, select, textarea { font-size: 16px; }
+        @media (max-width: 360px) { .header { gap: 6px; } .h-user b { max-width: 28vw; } .overlay > div { overflow-wrap: anywhere; } }
+        @media (min-width: 600px) { #mainApp, .overlay > div:not(.mp-head):not(:first-child) { margin-left: auto; margin-right: auto; } .overlay > div:not(.mp-head):not(:first-child):not(.filter-bar) { max-width: 640px; } }
+    
+        /* Password show/hide (eye) toggle */
+        .pw-wrap { position: relative; width: 100%; }
+        .pw-wrap > input { padding-right: 54px !important; }
+        .pw-eye { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); width: 42px; height: 42px; min-width: 42px !important; min-height: 42px !important; border: 0; background: transparent; color: var(--muted); border-radius: 50%; padding: 0; cursor: pointer; display: grid; place-items: center; -webkit-tap-highlight-color: transparent; transition: color .2s, background .2s; }
+        .pw-eye svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+        .pw-eye .e-open { display: none; }
+        .pw-eye .e-closed { display: block; }
+        .pw-eye.on { color: var(--neon); }
+        .pw-eye.on .e-open { display: block; } .pw-eye.on .e-closed { display: none; }
+        .pw-eye:active { background: rgba(0,229,255,.12); }
+    </style>
+</head>
+<body>
+
+<div id="splash"><div class="sp-in"><svg class="sp-svg" viewBox="0 0 400 360" aria-label="TOTA"><circle class="rg r1" cx="200" cy="170" r="120"/><circle class="rg r2" cx="200" cy="170" r="120"/><g class="sp-logo-g"><use class="p" href="#lg-yel" style="--dx:30px;--dy:170px;--r:40deg"/><use class="p" href="#lg-dk" style="--dx:-120px;--dy:130px;--r:-70deg"/><use class="p" href="#lg-body" style="--dx:-90px;--dy:-130px;--r:-25deg"/><use class="p" href="#lg-tail" style="--dx:-150px;--dy:20px;--r:-120deg"/><use class="p" href="#lg-stripe" style="--dx:-80px;--dy:110px;--r:55deg"/><use class="p" href="#lg-beak" style="--dx:160px;--dy:-60px;--r:90deg"/><use class="p" href="#lg-eye" style="--dx:120px;--dy:-150px;--r:200deg"/><use class="p" href="#lg-lab" style="--dx:0px;--dy:190px;--r:-8deg"/></g></svg><div class="sp-sub">FREE FIRE TOURNAMENTS</div><div class="sp-bar"><div class="sp-fill"></div></div></div></div>
+        <div id="ldr"><div class="ldr-c"><svg viewBox="0 0 400 310" aria-label="Loading"><use href="#lg-yel"/><use href="#lg-dk"/><use href="#lg-body"/><use href="#lg-tail"/><use href="#lg-stripe"/><use href="#lg-beak"/><use href="#lg-eye"/></svg></div></div>
+    <svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<g id="lg-yel"><polygon points="173,210 325,113 218,294" fill="#FFEB0A" stroke="#E8281B" stroke-width="3"/></g>
+<g id="lg-dk"><polygon points="138,192 205,186 210,200 155,225" fill="#B3190F"/></g>
+<g id="lg-body"><polygon points="58,196 287,12 330,98 205,186" fill="#27E60E" stroke="#E8281B" stroke-width="4"/></g>
+<g id="lg-tail"><polygon points="15,196 60,189 60,201 17,204" fill="#E8281B"/></g>
+<g id="lg-stripe"><polygon points="127,242 332,93 345,108 138,261" fill="#E8281B"/></g>
+<g id="lg-beak"><polygon points="332,93 378,165 345,134 325,115" fill="#E8281B"/></g>
+<g id="lg-eye"><circle cx="269" cy="73" r="17" fill="#fff" stroke="#E8281B" stroke-width="5"/><circle cx="269" cy="74" r="8" fill="#111"/><circle cx="272" cy="70" r="2.5" fill="#fff"/></g>
+<g id="lg-lab"><rect x="102" y="295" width="217" height="48" fill="none" stroke="#E8281B" stroke-width="3"/><text x="210" y="331" text-anchor="middle" font-size="40" letter-spacing="4" fill="#E8281B" font-family="'Segoe UI',Arial,sans-serif">TOTA</text></g>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 9l6 6 6-6"/></symbol>
+<symbol id="i-home" viewBox="0 0 24 24"><path d="M3 11l9-8 9 8"/><path d="M5 10v10h14V10"/><path d="M10 20v-6h4v6"/></symbol>
+<symbol id="i-wallet" viewBox="0 0 24 24"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0 0 4h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5"/><path d="M16 13h2"/></symbol>
+<symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7"/></symbol>
+<symbol id="i-headset" viewBox="0 0 24 24"><path d="M4 14v-2a8 8 0 0 1 16 0v2"/><rect x="3" y="14" width="4" height="6" rx="1.5"/><rect x="17" y="14" width="4" height="6" rx="1.5"/><path d="M19 20c0 1.5-2 2-5 2"/></symbol>
+<symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-live" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2"/><path d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M8 12.5l3 3 5-6"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-back" viewBox="0 0 24 24"><path d="M19 12H5M11 6l-6 6 6 6"/></symbol>
+<symbol id="i-gift" viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="4" rx="1"/><path d="M12 8v13M5 12v8h14v-8M8 8a2.5 2.5 0 0 1 0-5c2 0 4 5 4 5s2-5 4-5a2.5 2.5 0 0 1 0 5"/></symbol>
+<symbol id="i-receipt" viewBox="0 0 24 24"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2V3z"/><path d="M9 8h6M9 12h6"/></symbol>
+<symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+<symbol id="i-mail" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></symbol>
+<symbol id="i-insta" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5"/><circle cx="12" cy="12" r="4"/><circle cx="17.5" cy="6.5" r=".8"/></symbol>
+<symbol id="i-send" viewBox="0 0 24 24"><path d="M21 3L10 14M21 3l-7 18-4-7-7-4 18-7z"/></symbol>
+<symbol id="i-game" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="11" rx="5"/><path d="M7 10v5M4.5 12.5h5M15.5 11h.01M18 14h.01"/></symbol>
+<symbol id="i-trophy" viewBox="0 0 24 24"><path d="M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0V4z"/><path d="M17 5h3v2a3 3 0 0 1-3 3M7 5H4v2a3 3 0 0 0 3 3"/></symbol>
+<symbol id="i-coin" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 8h6M9 11.5h6M9 8c4.5 0 4.5 5 0 5l4 3.5"/></symbol>
+<symbol id="i-mega" viewBox="0 0 24 24"><path d="m3 11 18-5v12L3 14v-3z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></symbol>
+</defs></svg>
+
+    <!-- AUTH -->
+    <div id="authPage" class="hidden">
+        <!-- WELCOME -->
+        <div id="scWelcome" class="a-screen show" style="text-align:center;margin-top:60px">
+            <svg class="wlogo" viewBox="0 0 400 360" aria-label="TOTA"><use href="#lg-yel"/><use href="#lg-dk"/><use href="#lg-body"/><use href="#lg-tail"/><use href="#lg-stripe"/><use href="#lg-beak"/><use href="#lg-eye"/><use href="#lg-lab"/></svg>
+            <p style="color:#8FA9C9;margin:25px 0 45px;letter-spacing:3px;font-size:11px">FREE FIRE TOURNAMENTS</p>
+            <button class="btn-action a-main" onclick="goAuth('scRegister')">REGISTER</button>
+            <button class="btn-action a-main" style="background:transparent;color:var(--neon);border:2px solid var(--neon)" onclick="goAuth('scLogin')">LOGIN</button>
+        </div>
+
+        <!-- LOGIN -->
+        <div id="scLogin" class="a-screen" style="margin-top:40px">
+            <h1 class="a-title">Welcome Back,<br><span>Login</span></h1>
+            <input class="a-in" type="text" id="loginUser" placeholder="Username">
+            <input class="a-in" type="password" id="loginPass" placeholder="Password">
+            <button class="btn-action a-main" id="loginBtn" onclick="handleLogin()">LOGIN</button>
+            <div class="a-link">New here? <b onclick="goAuth('scRegister')">REGISTER</b></div>
+        </div>
+<!-- REGISTER -->
+        <div id="scRegister" class="a-screen">
+            <h1 class="a-title">Welcome to,<br><span>Register</span></h1>
+            <div class="av-label">Choose your avatar</div><div class="av-pick" id="rAvPick"></div>
+            <input class="a-in" type="text" id="rFirst" placeholder="First Name">
+            <input class="a-in" type="text" id="rLast" placeholder="Last Name">
+            <input class="a-in" type="text" id="rUser" placeholder="Username">
+            <div class="a-row">
+                <input class="a-in" type="text" id="rCode" value="+91">
+                <input class="a-in" type="tel" id="rPhone" placeholder="Phone number" maxlength="10">
+            </div>
+            <input class="a-in" type="email" id="rEmail" placeholder="Email">
+            <input class="a-in" type="password" id="rPass" placeholder="Create a password (min 6 characters)" autocomplete="new-password">
+            <input class="a-in" type="password" id="rPass2" placeholder="Confirm Password">
+            <div class="a-note">By Registering, I agree to TOTA FF's <b>Terms and Conditions</b> and <b>Privacy Policy</b></div>
+            <button class="btn-action a-main" id="signupBtn" onclick="handleSignup()">REGISTER</button>
+            <div class="a-link">Already have an account? <b onclick="goAuth('scLogin')">LOGIN</b></div>
+            <div style="height:30px"></div>
+        </div>
+    </div>
+
+    <!-- MAIN APP -->
+    <div id="mainApp" class="hidden">
+        <div class="header">
+            <div class="h-user" onclick="showTab('profilePage','nProf')">
+                <div class="h-av" id="hAv"><span>U</span></div>
+                <div><b id="hName">Player</b><small>TOTA FF</small></div>
+            </div>
+            <div class="h-right">
+                <button class="h-ic" onclick="openSupport()" aria-label="Support"><svg class="ic"><use href="#i-headset"/></svg></button>
+                <div class="wpill" onclick="openAddMoney()"><span>&#8377;<span id="topCoins">0</span></span><i></i><svg class="ic"><use href="#i-plus"/></svg></div>
+            </div>
+        </div>
+
+        <!-- HOME -->
+        <div id="homePage" class="page active-page">
+            <div class="notice"><svg class="ic"><use href="#i-mega"/></svg><span>Follow the rules &ndash; Enjoy fair gameplay on TOTA FF</span><button class="rl-view" onclick="openRules()">VIEW</button></div>
+            <div id="posterWrap" class="posters hidden"><div id="posterTrack" class="p-track"></div><div id="posterDots" class="p-dots"></div></div>
+            <h4 class="sec-t">MY CONTESTS<small>Your tournaments journey</small></h4>
+            <div class="tiles">
+                <div class="tile" onclick="openMatches(null,'upcoming','UPCOMING')"><b id="cUp">0</b><svg class="ic"><use href="#i-clock"/></svg><span>Upcoming</span></div>
+                <div class="tile" onclick="openMatches(null,'live','LIVE')"><b id="cLive">0</b><svg class="ic"><use href="#i-live"/></svg><span>Live</span></div>
+                <div class="tile" onclick="openMatches(null,'end','COMPLETED')"><b id="cEnd">0</b><svg class="ic"><use href="#i-check"/></svg><span>Completed</span></div>
+            </div>
+            <h4 class="sec-t">GAME MODES<small>Select a mode to see matches</small></h4>
+            <div id="catGrid" class="cat-grid"><p style="color:#8FA9C9; font-size:12px; padding:0 15px;">Loading...</p></div>
+        </div>
+
+        <!-- WALLET -->
+        <div id="walletPage" class="page">
+            <div class="w-card">
+                <div class="w-row"><div><span class="w-lbl"><svg class="ic"><use href="#i-wallet"/></svg>Total Balance</span><b class="w-num" id="wCoins">##</b></div><button class="w-btn w-neon" onclick="openAddMoney()"><svg class="ic"><use href="#i-plus"/></svg>Add Coins</button></div>
+                <div class="w-row"><div><span class="w-lbl"><svg class="ic"><use href="#i-plus"/></svg>Deposited</span><b class="w-num" id="wDep">##</b></div><button class="w-btn w-plus" onclick="openAddMoney()">+ Deposit</button></div>
+                <div class="w-row"><div><span class="w-lbl"><svg class="ic"><use href="#i-receipt"/></svg>Coin Order</span><b class="w-num" style="font-size:14px;color:var(--muted);font-weight:600">Deposit status &amp; 24h timer</b></div><button class="w-btn w-white" onclick="openMyOrders()">View</button></div>
+                <div class="w-row"><div><span class="w-lbl"><svg class="ic"><use href="#i-trophy"/></svg>Winning</span><b class="w-num" id="wWin">##</b></div><button class="w-btn w-green" onclick="openWithdraw()">Withdraw</button></div>
+                <div class="w-row"><div><span class="w-lbl"><svg class="ic"><use href="#i-clock"/></svg>Emergency</span><b class="w-num" style="font-size:14px;color:var(--muted);font-weight:600">3 hours payout &middot; 16% fee</b></div><button class="w-btn w-red" onclick="openWithdraw(true)">Emergency</button></div>
+                <div class="w-row"><div><span class="w-lbl"><svg class="ic"><use href="#i-receipt"/></svg>Withdraw Order</span><b class="w-num" style="font-size:14px;color:var(--muted);font-weight:600">Status &amp; timer</b></div><button class="w-btn w-white" onclick="openMyWd()">View</button></div>
+                <div class="w-row"><div><span class="w-lbl"><svg class="ic"><use href="#i-gift"/></svg>Coin Code</span><b class="w-num" style="font-size:14px;color:var(--muted);font-weight:600">Redeem a code for free coins</b></div><button class="w-btn w-yel" onclick="openCoinCode()">Redeem</button></div>
+                <div class="w-row"><div><span class="w-lbl"><svg class="ic"><use href="#i-coin"/></svg>Earnings</span><b class="w-num" id="wEarn">##</b><span class="w-sub">Winnings + coins added by TOTA FF</span></div></div>
+                <div class="w-foot">Only winnings can be redeemed.</div>
+            </div>
+            <div class="sec-t" style="display:flex;justify-content:space-between;align-items:center;margin-right:15px"><span>HISTORY<small>Latest transactions</small></span><button class="hbtn" onclick="openHistory()">VIEW ALL</button></div>
+            <div id="wHist" style="padding:0 15px"><p class="empty">Loading...</p></div>
+        </div>
+         <!-- PROFILE -->
+        <div id="profilePage" class="page">
+            <div class="acc-top">
+                <div class="acc-av"><span id="pAvatar">U</span></div>
+                <h2 id="pNameDisplay" style="margin:10px 0 2px;">User</h2><p id="pUserTag" style="color:var(--neon); margin:0;">@username</p>
+                <div id="pgBox" style="margin:14px auto 0;max-width:340px;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:12px;text-align:left">
+                    <label style="display:block;font-size:11px;color:var(--muted);font-weight:700;margin-bottom:4px">APNA GAME NAME</label>
+                    <input id="pgName" placeholder="Free Fire Game Name" maxlength="30" style="width:100%;box-sizing:border-box;margin:0 0 10px">
+                    <label style="display:block;font-size:11px;color:var(--muted);font-weight:700;margin-bottom:4px">APNA UID</label>
+                    <input id="pgUid" placeholder="Free Fire UID" inputmode="numeric" maxlength="15" style="width:100%;box-sizing:border-box;margin:0 0 10px">
+                    <button id="pgSave" onclick="saveGameBox()" style="width:100%;padding:11px;border:none;border-radius:10px;background:var(--accent);color:#04122E;font-weight:800;cursor:pointer">SAVE</button>
+                    <p style="margin:8px 0 0;font-size:11px;color:var(--muted);text-align:center">Ek baar save karo, har match join mein apne-aap aa jayega.</p>
+                </div>
+            </div>
+            <div class="acc-stats"><div><b id="sMatches">0</b><span>Matches Played</span></div><div><b id="sKills">0</b><span>Total Kills</span></div><div><b id="sWon">0</b><span>Amount Won</span></div></div>
+            <div class="mi"  onclick="openProfileEdit()"><span class="mi-t"><svg class="ic"><use href="#i-user"/></svg>My Profile</span><i>&rsaquo;</i></div>
+            <div class="mi"  onclick="showTab('walletPage','nWall')"><span class="mi-t"><svg class="ic"><use href="#i-wallet"/></svg>My Wallet</span><i>&rsaquo;</i></div>
+            <div class="mi"  onclick="openMyMatches()"><span class="mi-t"><svg class="ic"><use href="#i-game"/></svg>My Matches</span><i>&rsaquo;</i></div>
+            <div class="mi"  onclick="openMyOrders()"><span class="mi-t"><svg class="ic"><use href="#i-receipt"/></svg>My Order (Coins)</span><i>&rsaquo;</i></div>
+            <div class="mi"  onclick="openSupport()"><span class="mi-t"><svg class="ic"><use href="#i-headset"/></svg>Customer Support</span><i>&rsaquo;</i></div>
+            <div class="mi" onclick="openAnnounce()"><span class="mi-t"><svg class="ic"><use href="#i-mega"/></svg>Announcements</span><i>&rsaquo;</i></div>
+            <div class="mi" onclick="openRules()"><span class="mi-t"><svg class="ic"><use href="#i-receipt"/></svg>Terms &amp; Conditions</span><i>&rsaquo;</i></div>
+            <div class="mi" onclick="shareApp()"><span class="mi-t"><svg class="ic"><use href="#i-send"/></svg>Share App</span><i>&rsaquo;</i></div>
+            <div class="mi" onclick="openTutorial()"><span class="mi-t"><svg class="ic"><use href="#i-live"/></svg>App Tutorial</span><i>&rsaquo;</i></div>
+            <div class="mi" onclick="openAbout()"><span class="mi-t"><svg class="ic"><use href="#i-check"/></svg>About TOTA FF</span><i>&rsaquo;</i></div>
+            <div class="mi" style="color:var(--red)" onclick="try{window.totaPushLogout()}catch(e){} auth.signOut().then(()=>location.reload())"><span class="mi-t"><svg class="ic" style="color:var(--red)"><use href="#i-logout"/></svg>Logout</span><i>&rsaquo;</i></div>
+        </div>
+
+        <div class="nav">
+            <div class="nav-item nav-active" id="nPlay" onclick="showTab('homePage', 'nPlay')"><svg class="ic"><use href="#i-home"/></svg><span>Home</span></div>
+            <div class="nav-item" id="nWall" onclick="showTab('walletPage', 'nWall')"><svg class="ic"><use href="#i-wallet"/></svg><span>Wallet</span></div>
+            <div class="nav-item" id="nProf" onclick="showTab('profilePage', 'nProf')"><svg class="ic"><use href="#i-user"/></svg><span>Profile</span></div>
+            </div>
+    </div>
+
+    <!-- ACCOUNT OVERLAYS -->
+    <div id="profileEdit" class="overlay">
+        <div class="mp-head"><b onclick="ov('profileEdit',false)" style="color:var(--neon);"><svg class="ic"><use href="#i-back"/></svg> Back</b><b style="color:var(--gold);">MY PROFILE</b></div>
+        <div style="padding:20px;">
+            <div class="av-label">Avatar</div><div class="av-pick" id="eAvPick"></div>
+            <div class="a-row"><input id="eFirst" placeholder="First Name" style="width:50%"><input id="eLast" placeholder="Last Name" style="width:50%"></div>
+            <input id="eUser" placeholder="Username" readonly style="opacity:.6"><input id="eEmail" type="email" placeholder="Email">
+            <input id="ePhone" type="tel" placeholder="Phone" maxlength="13">
+            <input id="eGName" placeholder="Free Fire Game Name (auto-fill in matches)"><input id="eGUid" placeholder="Free Fire UID (auto-fill in matches)" inputmode="numeric">
+            <button class="btn-action a-main" onclick="updateProfile()">UPDATE PROFILE</button>
+            <h4 class="sec-t" style="margin-left:0">RESET PASSWORD</h4>
+            <input id="oldPass" type="password" placeholder="Old Password"><input id="newPass" type="password" placeholder="New Password (min 6)">
+            <button class="btn-action a-main" style="background:var(--accent)" onclick="resetPass()">RESET</button>
+        </div>
+    </div>
+    <div id="myMatchesPage" class="overlay"><div class="mp-head"><b onclick="ov('myMatchesPage',false)" style="color:var(--neon);"><svg class="ic"><use href="#i-back"/></svg> Back</b><b style="color:var(--gold);">MY MATCHES</b></div><div id="myMatchesList" style="padding:15px;"></div></div>
+    <div id="myOrdersPage" class="overlay"><div class="mp-head"><b onclick="ov('myOrdersPage',false)" style="color:var(--neon);"><svg class="ic"><use href="#i-back"/></svg> Back</b><b style="color:var(--gold);">MY ORDER</b></div><div id="myOrdersList" style="padding:15px;"></div></div>
+    <div id="supportPage" class="overlay" style="z-index:2500"><div class="mp-head"><b onclick="ov('supportPage',false)" style="color:var(--neon);"><svg class="ic"><use href="#i-back"/></svg> Back</b><b style="color:var(--gold);">CUSTOMER SUPPORT</b></div><div id="supList" style="padding:15px;"></div></div>
+
+    <!-- MATCHES LIST -->
+    <div id="matchesPage" class="overlay">
+        <div class="mp-head"><b onclick="closeMatches()" style="color:var(--neon); cursor:pointer;"><svg class="ic"><use href="#i-back"/></svg> Back</b><b id="mpTitle" style="color:var(--gold); letter-spacing:2px;">MATCHES</b></div>
+        <div class="filter-bar" style="top:47px;">
+            <div class="f-tab" data-s="all" onclick="filterMatches('all', this)">ALL</div>
+            <div class="f-tab" data-s="live" onclick="filterMatches('live', this)">LIVE</div>
+            <div class="f-tab" data-s="upcoming" onclick="filterMatches('upcoming', this)">UPCOMING</div>
+            <div class="f-tab" data-s="end" onclick="filterMatches('end', this)">RESULTS</div>
+        </div>
+        <div id="matchList" style="padding-bottom:30px;"></div>
+    </div>
+   <!-- JOIN PORTAL -->
+    <div id="joinPortal" class="overlay">
+        <div class="mp-head"><b onclick="closePortal()" style="color:var(--neon); cursor:pointer;"><svg class="ic"><use href="#i-back"/></svg> Back</b><b id="portMTitle" style="color:var(--gold); font-size:12px;">JOIN</b></div>
+        <div id="jStep1" style="padding:15px;">
+            <div class="jcard"><div>Your Balance <b id="jBal"></b></div><div>Entry Fee / Spot <b id="jFee"></b></div></div>
+            <h4 class="sec-t" style="margin-left:0;">SELECT MATCH POSITION<small id="jHint"></small></h4>
+            <div id="posGrid" class="pos-grid"></div>
+            <button class="btn-action a-main" onclick="toDetails()">CONTINUE</button>
+        </div>
+        <div id="jStep2" class="hidden" style="padding:15px;">
+            <div class="jcard"><div>Selected Position <b id="jSel"></b></div><div>Total Payable <b id="jTot"></b></div></div>
+            <div class="jbox">
+                <label>FULL GAME NAME</label><input type="text" id="pGameName" placeholder="Enter full in-game name">
+                <label>FREE FIRE UID</label><input type="text" id="pGameUid" placeholder="Enter your Free Fire UID" inputmode="numeric">
+            </div>
+            <button id="joinBtn" class="btn-action a-main" onclick="processJoin()">JOIN</button>
+            <div class="tnc"><b>TERMS &amp; CONDITIONS</b>
+                <div>Horse use is not allowed.</div><div>Double vector and single vector are not allowed.</div><div>Play normal gameplay only. No hacks, no teaming.</div><div>Rule break = account BAN, no refund.</div>
+                <div>Any problem? Contact the Support Team.</div>
+                <button class="hbtn" style="margin-top:8px;" onclick="openSupport()">CONTACT SUPPORT</button></div>
+        </div>
+    </div>
+
+    <!-- HISTORY -->
+    <div id="historyPage" class="overlay">
+        <div style="padding:15px; background:#0C1A3A; display:flex; justify-content:space-between; align-items:center; border-bottom:1px solid #1C3562;">
+            <b onclick="closeHistory()" style="color:var(--neon); cursor:pointer;"><svg class="ic"><use href="#i-back"/></svg> Back</b>
+            <b style="color:var(--gold);">HISTORY</b>
+        </div>
+        <div class="h-tabs"><button class="on" onclick="histTab('dep',this)"><svg class="ic"><use href="#i-plus"/></svg> Deposit</button><button onclick="histTab('wd',this)">Withdraw</button><button onclick="histTab('oth',this)">Matches &amp; Coins</button></div>
+        <div id="histList" style="padding:15px;"><p style="color:#8FA9C9; font-size:12px;">Loading...</p></div>
+    </div>
+
+    <!-- WINNERS -->
+    <div id="winnerPortal" class="overlay">
+        <div style="padding:15px; background:#0C1A3A; display:flex; justify-content:space-between; align-items:center;">
+            <b onclick="closeWinnerPortal()" style="color:var(--neon); cursor:pointer;"><svg class="ic"><use href="#i-back"/></svg> Back</b>
+            <b style="color:var(--gold);">MATCH RESULT</b>
+        </div>
+        <div style="padding:20px;" id="winnerContentList"></div>
+    </div>
+
+    <!-- ADD MONEY -->
+    <div id="addMoneyPage" class="overlay">
+        <div style="padding:15px; background:#0C1A3A; display:flex; justify-content:space-between; align-items:center; border-bottom: 1px solid #1C3562;">
+            <b onclick="closeAddMoney()" style="color:var(--neon); cursor:pointer; font-size: 13px;"><svg class="ic"><use href="#i-back"/></svg> Back</b>
+            <b style="color:var(--gold); font-size: 13px; text-transform: uppercase;">SECURE UPI GATEWAY</b>
+        </div>
+        <div style="padding:15px;">
+            <div id="gatewayStep1" class="gateway-card" style="text-align: center;">
+                <p style="color: #8FA9C9; font-size: 11px; margin-bottom: 5px; text-transform: uppercase; font-weight: bold;">Add Balance to Wallet</p>
+                <h3 style="color: var(--neon); margin-top: 0;">₹1 = 1 Coin</h3>
+                <input type="number" id="depositAmount" placeholder="Enter Amount (Min ₹10)" style="text-align: center; font-size: 18px; font-weight: bold; color: var(--gold);">
+                <button class="btn-action" style="width:100%; padding:16px; margin-top:10px; background: var(--accent); color: #04122E;" onclick="initiateGatewayPayment()">PROCEED TO PAY</button>
+            </div>
+            <div id="gatewayStep2" class="gateway-card hidden">
+                <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #112449; padding-bottom: 8px; margin-bottom: 10px;">
+                    <span style="font-size: 10px; color: #8FA9C9;">Merchant: <b style="color: #fff;">TOTA FF ESPORTS</b></span>
+                    <span style="font-size: 13px; font-weight: bold; color: var(--gold);" id="gatewayDisplayAmt">₹0</span>
+                </div>
+                <img id="adminQR" class="qr-clean" src="https://i.ibb.co/Xkh0fW8X/1000182601.jpg" alt="UPI QR">
+                <p style="color: #aaa; font-size: 10px; text-align: center; margin: 2px 0 10px 0;">Scan via FamPay / GPay / PhonePe / Paytm</p>
+                <div style="background: rgba(255, 49, 49, 0.08); border: 1px dashed var(--red); padding: 8px; border-radius: 8px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+                    <span style="font-size: 11px; color: #aaa;">Complete payment in:</span>
+                    <h3 id="gatewayTimer" style="color: var(--red); margin: 0; font-family: monospace; font-size: 15px;">02:00</h3>
+                </div>
+                <div style="text-align: left; margin-bottom: 10px;">
+                    <label style="font-size: 11px; color: #fff; font-weight: bold; display: block; margin-bottom: 4px;">Enter UPI ID / Number (Optional):</label>
+                    <input type="text" id="payerUpiInput" placeholder="Ex: mobilenumber@fam / GPay" style="text-align: center; margin: 0; font-size: 12px; color: #fff;">
+                </div>
+                <button id="gatewaySuccessBtn" class="btn-action" style="width:100%; padding:16px; background: var(--green); color:#04122E; font-size: 12px; border: none;" onclick="submitGatewayPaymentProof()">PAYMENT DONE (SUBMIT PROOF)</button>
+                <p style="font-size: 10px; color: #ccc; text-align: center; margin-top: 12px; line-height: 1.5;"> Coins will be added within <b style="color: var(--gold);">24 hours</b>. If not added, your money will be <b style="color: var(--neon);">returned/refunded</b> automatically.</p>
+            </div>
+            <b class="insta-tag">@totaff70</b>
+        </div>
+    </div>
+ <!-- COIN CODE -->
+    <div id="coinCodePage" class="overlay">
+        <div style="padding:15px; background:#0C1A3A;"><b onclick="closeCoinCode()" style="color:var(--neon); cursor:pointer;"><svg class="ic"><use href="#i-back"/></svg> Back</b></div>
+        <div style="padding:25px; text-align:center;">
+            <h3>REDEEM COIN CODE</h3>
+            <p style="color:#8FA9C9; font-size:12px; margin-top:0;">Code daalo aur coins turant wallet mein add ho jayenge. Ek code ek user sirf ek baar use kar sakta hai.</p>
+            <input type="text" id="coinCodeInput" placeholder="Enter Coin Code" autocapitalize="characters" style="text-align:center; letter-spacing:2px; text-transform:uppercase; font-weight:bold;">
+            <button id="coinCodeBtn" class="btn-action" style="width:100%; padding:15px;" onclick="redeemCoinCode()">REDEEM</button>
+        </div>
+    </div>
+
+    <!-- WITHDRAW -->
+    <div id="rulesPage" class="overlay" style="z-index:2500"><div class="mp-head"><b onclick="ov('rulesPage',false)" style="color:var(--neon);"><svg class="ic"><use href="#i-back"/></svg> Back</b><b style="color:var(--gold);">RULES &amp; TERMS</b></div><div id="rulesBody" style="padding:18px;white-space:pre-wrap;line-height:1.8;font-size:14px;user-select:text"></div></div>
+    <div id="infoPage" class="overlay" style="z-index:2500"><div class="mp-head"><b onclick="ov('infoPage',false)" style="color:var(--neon);"><svg class="ic"><use href="#i-back"/></svg> Back</b><b id="infoTitle" style="color:var(--gold);"></b></div><div id="infoBody" style="padding:18px;white-space:pre-wrap;line-height:1.8;font-size:14px;user-select:text"></div></div>
+    <div id="myWdPage" class="overlay"><div class="mp-head"><b onclick="ov('myWdPage',false)" style="color:var(--neon);"><svg class="ic"><use href="#i-back"/></svg> Back</b><b style="color:var(--gold);">WITHDRAW ORDER</b></div><div id="myWdList" style="padding:15px;"></div></div>
+    <div id="withdrawModal" class="overlay">
+        <div style="padding:15px; background:var(--bg); border-bottom:1px solid var(--line);"><b onclick="closeWithdraw()" style="color:var(--neon); cursor:pointer;"><svg class="ic"><use href="#i-back"/></svg> Back</b></div>
+        <div style="padding:20px;">
+            <h3 id="wdTitle" style="margin:0 0 4px">Withdraw</h3>
+            <span class="wd-lbl">1. Choose your UPI app</span>
+            <div class="upi-grid" id="upiGrid"></div>
+            <span class="wd-lbl" id="wdUpiLbl">2. Enter your UPI ID</span>
+            <input type="text" id="wdUpi" placeholder="Select an app first" autocapitalize="none" autocomplete="off">
+            <span class="wd-lbl">3. Amount</span>
+            <input type="number" id="wdAmount" placeholder="Minimum &#8377;30" inputmode="numeric">
+            <div class="wd-note" id="wdNote">Minimum withdraw &#8377;30. Payment is sent to your UPI ID after approval.</div>
+            <button id="wdSubmit" class="btn-action a-main" onclick="submitWithdraw()">SUBMIT REQUEST</button>
+        </div>
+    </div>
+
+    <div id="popBg" class="pop-bg"><div class="pop"><div class="pop-bar" id="popBar"></div><div id="popMsg" style="padding:18px 6px;"></div><button class="btn-action" style="width:100%" onclick="document.getElementById('popBg').classList.remove('show')">OK</button></div></div>
+    <div id="toast" class="toast"></div>
+    <div id="phBg" class="pop-bg"><div class="pop"><div class="pop-bar" style="background:var(--accent)"></div><h3 style="color:#00E5FF; margin:14px 0 6px;">Phone Number Daalo</h3><div style="color:#8FA9C9; font-size:13px; padding-bottom:12px; line-height:1.6;">Aapka phone number save nahi hai. Apna 10 digit number daalo.</div><input class="a-in" type="tel" id="phIn" maxlength="10" placeholder="10 digit number" style="width:100%; text-align:center"><button class="btn-action" style="width:100%; margin-top:10px; background:var(--accent); color:#04122E" onclick="savePhone()">SAVE</button><div onclick="document.getElementById('phBg').classList.remove('show')" style="color:#8FA9C9; font-size:12px; margin-top:12px; cursor:pointer;">Baad mein</div></div></div>
+    <div id="offBg" class="pop-bg"><div class="pop"><div class="pop-bar" style="background:#EF4444"></div><svg class="ic" style="width:42px;height:42px;color:#EF4444;margin-top:10px" viewBox="0 0 24 24"><path d="M2 8.8a15 15 0 0 1 4-2.4M22 8.8a15 15 0 0 0-9-3.7M5 12.9a10 10 0 0 1 3.2-2M19 12.9a10 10 0 0 0-3-1.9M8.5 16.4a5 5 0 0 1 7 0M12 20h.01M3 3l18 18"/></svg><h3 style="color:#00E5FF; margin:10px 0 6px;">No Internet</h3><div style="color:#8FA9C9; font-size:13px; padding-bottom:16px; line-height:1.6;">Ye app internet se chalta hai. Internet on karo, connection aate hi app apne-aap wapas chalu ho jayega.</div><button class="btn-action" style="width:100%; background:var(--accent); color:#04122E" onclick="retryNet()">RETRY</button></div></div>
+
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-database.js"></script>
+    <script>
+    const firebaseConfig = { apiKey: "AIzaSyCs7UmnVMnYR6qXBJVyv20SpEsy7RM_jK0", authDomain: "tota-ff.firebaseapp.com", projectId: "tota-ff", databaseURL: "https://tota-ff-default-rtdb.firebaseio.com", storageBucket: "tota-ff.firebasestorage.app", messagingSenderId: "705838663321", appId: "1:705838663321:web:007be1d53311b1fdc59a08" };
+        let auth = null, db = null;
+        try {
+            if (!firebase.apps.length) { firebase.initializeApp(firebaseConfig); }
+            auth = firebase.auth(); db = firebase.database();
+        } catch (e) { console.error('Firebase load nahi hua:', e); }
+        /* ---------- LOADING SCREEN LOGIC ---------- */
+        const ld = (() => {
+            const pend = new Map(); let seq = 0, showT = null;
+            function render() {
+                const e = document.getElementById('ldr'); if (!e) return;
+                if (pend.size) { if (!showT && !e.classList.contains('show')) showT = setTimeout(() => { showT = null; if (pend.size) e.classList.add('show'); }, 180); }
+                else { clearTimeout(showT); showT = null; e.classList.remove('show'); }
+                e.classList.toggle('block', [...pend.values()].some(v => v.block));
+            }
+            function end(k, silent) { const v = pend.get(k); if (!v) return; clearTimeout(v.t); pend.delete(k); if (!silent) render(); }
+            function start(k, block) { k = k || ('k' + (++seq)); end(k, true); pend.set(k, { block: !!block, t: setTimeout(() => end(k), 12000) }); render(); return k; }
+            return { start, end };
+        })();
+        try {
+            const RP = firebase.database.Reference.prototype;
+            const wrap = (m, block) => { const o = RP[m]; RP[m] = function () { const r = o.apply(this, arguments); if (r && typeof r.then === 'function') { const k = ld.start(null, block), done = () => ld.end(k); r.then(done, done); } return r; }; };
+            ['update', 'set', 'remove', 'transaction', 'push'].forEach(m => wrap(m, true)); wrap('once', false);
+        } catch (e) {}
+        const noFb = () => alert("Firebase connect nahi ho paya. App ko apni hosting / Chrome mein kholo.");
+        window.alert = m => {
+            const s = String(m); const bad = /galat|nahi|not |error|low|full|expired|already|limit|only|booked|enter|sahi/i.test(s) && !/success|ho gaye|ban gaya|saved|updated|joined|submitted/i.test(s);
+            document.getElementById('popBar').style.background = bad ? '#EF4444' : '#2DBE74';
+            document.getElementById('popMsg').innerText = s; document.getElementById('popBg').classList.add('show');
+        };
+        let toastT; function toast(m) { const t = document.getElementById('toast'); t.innerText = m; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2000); }
+        /* ---------- NO INTERNET POPUP ---------- */
+        let offT, fbUp = true;
+        const offShow = on => document.getElementById('offBg').classList.toggle('show', on);
+        function checkNet() { clearTimeout(offT); if (!navigator.onLine) return offShow(true); if (fbUp) return offShow(false); offT = setTimeout(() => { if (!fbUp) offShow(true); }, 5000); }
+        function retryNet() { if (!navigator.onLine) return toast('Abhi bhi internet nahi hai'); try { db.goOffline(); db.goOnline(); } catch (e) {} setTimeout(() => { if (navigator.onLine && fbUp) offShow(false); else location.reload(); }, 1500); }
+        window.addEventListener('offline', checkNet); window.addEventListener('online', checkNet);
+        if (db) db.ref('.info/connected').on('value', sn => { fbUp = sn.val() === true; checkNet(); });
+        checkNet();
+        const ov = (id, on) => document.getElementById(id).classList.toggle('overlay-active', on);
+        let curProfile = {}, myJoinRecs = [], txCache = [];
+        let curUserBal = 0, allJoinsGlobal = {}, myJoins = [], matchesCache = [];
+        let gatewayTimerInterval, currentGatewayAmt = 0, currentFilter = 'upcoming', curCat = null;
+
+
+        /* ---------- AUTH STATE: splash khatam + auth pata chalne ke baad hi sahi page dikhta hai ---------- */
+        let authDone = false, authUser = null, animDone = false;
+        const hx = s => String(s == null ? "" : s).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+        function showApp(on) {
+            document.getElementById('authPage').classList.toggle('hidden', on);
+            document.getElementById('mainApp').classList.toggle('hidden', !on);
+            document.documentElement.classList.toggle('known', on);
+            if (!on) { try { if (localStorage.getItem('tota_reg') === '1') goAuth('scLogin'); const lu = localStorage.getItem('tota_last_user'); if (lu) document.getElementById('loginUser').value = lu; } catch (e) {} }
+            const sp = document.getElementById('splash'); sp.classList.add('open'); setTimeout(() => sp.style.display = 'none', 900);
+        }
+        function reveal() { if (animDone && authDone) showApp(!!authUser); }
+        const reduceMo = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+        setTimeout(() => { animDone = true; reveal(); }, reduceMo ? 500 : 3300);
+        if (auth) auth.onAuthStateChanged(user => {
+            authDone = true; authUser = user;
+            if (user) { try { localStorage.setItem('tota_in', '1'); localStorage.setItem('tota_reg', '1'); } catch (e) {} if (user.uid) { try { window.totaPushLogin(user.uid); } catch (e) {} loadAppData(user.uid); } }
+            else { try { localStorage.removeItem('tota_in'); } catch (e) {} }
+            reveal();
+        }); else { authDone = true; reveal(); }
+        setTimeout(() => { if (!authDone) { authDone = true; authUser = document.documentElement.classList.contains('known') ? {} : null; reveal(); } }, 6000);
+/* ---------- AVATARS ---------- */
+        const AV = {
+            g1: '<img alt="" src="data:image/webp;base64,' +
+                'UklGRs4OAABXRUJQVlA4IMIOAACwRACdASqgAKAAPnk0lUekoyIhKlSM0JAPCUAY3Y0jFZRdsf2/IMG/hv/qXe7+abzc/UB6AH9V' +
+                '6pXegLTQa27GzUryl2L5lKxBW+Wi0wahx/15i3Pi78GAza8MolO/pNbFJjhntJKs/CYBG01syu+6KayuHZI9Ujs6Lo1OxMrA8p21' +
+                'IGdpAGrB2/r9iWH6iEQRGfeJYmVJ3LLIP/2JHAqcT3gjXzXhkVHXo6VNuCGL4+oow/6a/SRbltqTzzmsLkUq9qcuzNEV6i8i+27h' +
+                'Boi7YFJiabY5vIGoa0BjFaJ/jlDd3ojWpfyEikKd00eyWHDo7877475+Q3MrDqCk1CAxfRySmy4FGevLmCi1NNLnv/BL6BfdN96d' +
+                'vJr/IwA8Hwko7E1itRYiSt1DoyuGw3aa+laNExdhm+lEp0EVPYTT1mNywK379IRYS8/+Pewch9rXBVaOxR1/aXp+gpDyYd9HlerU' +
+                '3iOzguJOfGO31dClun/dmlHKYv12052ltwnsw1n5RzASOtmXaZPYp5X/ZII4GPA/jvz2P2Hc9WqsKedFRKzhvkErqRjZSjc/L3Nj' +
+                'd+2YOXFBO1BFbp/+qQ4PNa3zq0OZ80jEEtxbWJdof/fyBp9ND/Gv3VWlEdlmbExnSfy0JB8mk+HpYdGee4/lHRbI3WOrXShUSkwr' +
+                'uj8vaotYQ9aEgKlnAgv/zD2GiCV/WYO037ljh5yHd+vLzVs9XavgbD6stVJCcgcyubPzuBgA/vwd0m27/u3toPIzpyhUv/qO7Kzs' +
+                'oBw0Oqc+4nt9mdSFgwCC4uocEzYrUFwQ53W5DF8lLojpX9547x6ZmrqMtrQQwa6dgb78HMrgWLi+K1y6HclIUOF4/ekQ7J3TfDAj' +
+                'FItjSpQNqV9N24ZGRDZKJTJ70f/m3Kq3MQZoSHVET6wmhQetlDRXIs77QZtd4Dy0L+IswkdQtt6897DEK/w5r2/ltKKq//541/7T' +
+                'a1sSV5LFQLxeIN/tUfgQhn+Kf7T4Cw7L1ZL9IcwJzaS1JP17cEEB2EDyNMNr3BLmXTmsKfMj4gYfZX6hvEXuBr7RRMz7nKxw1ePY' +
+                'fh+IWaRDZR6LsXqvc+zIIKqQ6RJDYfnVHhF1xh722FReEuj3k08nI0jd1kT+/0SLe+7Za0V8dlq69UWb7OA7kmrRmgWwZP8LTUDE' +
+                'w/MiwAsaqb5PKZ4s/Lp+6GTlcKRp24LQ+eycuVZPSQ6u2jVH4EbUkl0+HixEZynjawu86ZdfFqP1Q6PaNwotkPhbFSvBvrvb4caD' +
+                'Ond39kaqwFbu6YeDEav/Gwkd7iHZe+SShZ9HKDzO80xwyewIZ9BbJi0y7RtyE72lWJVptF4g7+k3mN2UAarBYtJkx/ni1rb92nzB' +
+                'xJnnencoJsELk+lrFE0uhCxGsZOKlH11alTno8S57kySiXNtsHLpLphepHnNII4KW2qafg9MV1/RwL2QvdNMtVPQ/rxgh8nEkH4Z' +
+                'l9GR+AKuDa0Tf4oYdWojpBuIb3K3Qca/Vqmwqs9tYEvYPzTRVlwVkYXxdFbHgUl/ZvB6bwVY7Kmdfeo6PwApIGUL5tDUsYbU3jro' +
+                '6W5WsGI/5K4ZqLfyiI5d5HFSaP0HnKaMze+Qyms1/QKKP57zvIKr96B5iieUFJY7pYh8xwdbFuvXm0ecQcdXBKoL/MUzFjq6Wyz2' +
+                'tIdQR3gVNejoYOTqlBFLV3QrxgC/BsynLPlEZsKE1D4RIaUZ1br/mhcxKx5QmGLBhxWqKogOvk26ZpRz96984FF6uvmZglqFqFEh' +
+                'rorI3GOawsZfWODgep1XOJR/bzkiZd9jn4+dPAQNOxNULJ/kXed3SwAjjdLit49kp+Qxtikxi/GrYzTt6pzJthkOBiAQUXgfk8qj' +
+                '/SlduSOIEjmV2ZcQzaPY/YyqzIb3qzYtDEC/2rGpmefhosdHVgnmdbxyWnfTyeFhjWvnsT+2lNDcMPmT44gjM1m8E48aoUcO73/N' +
+                'Cdp+1MM5gLoUHHRgxX4xYLsJF3xAjfGtZkyLFaw4RmxXs+DA78CNlOJXp6pvs71k+s1I7Fh/3WOoErn7VTk1Uhj8yH6mszYR07Dk' +
+                'cWbAP/QL/EgKCAgTVkr7ce/kBjIH6K4RXa/+2QCQbio4GtpoWv7lIakiMRW7fRN++0c5uwIMM0zTTTTjpFJlXhiGBiNvzeRClT8a' +
+                'iuUBWqwoiiYENs9s4stLYlBABnzvF6Kq8nSNWhT4P5/NODIB+Tc5LVbwk7hTh0rboVtTxSXmP3U95IiMgpHZL+cSPP9tzn1AUgFf' +
+                'MesSUlp/yldrPmLHnDNTl6O71Qwjdxz8mORKVycfSaSxVMZ7bjSU4N05kTPQxdvxmPG3HOv+133Q8bkd8/UD9QLtvILH/6f8CEB7' +
+                'XCDIAV5jBDU7LvZF0UodJ4lhsjfn8HWdSuGJR0NygaNSF1f0nc2AuqPyNLQE1j8tYfsA2lUe8zTooBnIWpGMPBKeUU8tZmh/V5Ka' +
+                'dHv8rGaHWNvugaOxr1NH5+sot7CTTdEeibNuvn8R7EuTkaBRJ3FlopCS8GOKbMF2y2EuOQSb2XlzJGdsQn+oEwINVzoRh9zP9vNw' +
+                'IHORGvb5MvQq9bGAATs6KwzRH+1syHYcrAwJC9edNqTmvo7WXZDMNOW5+2l1F+ABC+sEZuKbGgPLTpYcKil7fW90lIXMSBRuatYd' +
+                'qlEMteEFjX1HZh33X18HdHXGLGenz2TfjbBVUGnNd8PKKkynt1y3HxDiweLRjNGM+HJD+tTlC73WSBUszyN6PShi22zzrIiSbbpI' +
+                'Eazy8faB3hZsQDsGxUR+Ppo9fAi0c3M9/PZimc/qFBBLW8jt1DhtnuwFzRXtKp1RgFKcwTpgoGXzrJqXjPaDdCcfFgu+bD5H7HYG' +
+                'gNdSloNs8dhjCK5w+XDRpN6FcLNhAzhZaTk84GvFrfqcAI4mNJN4/QEWZo9+DWkOlgY4cXFEqlsKY7Ckn7qPodIojFeBBm5kmffL' +
+                'KX/s8lBJcyaRXsIOyWojpffA+Ncssf5ttfeLfVZcQ8vtx8gP/YqY5/2TJVhYxUnM8apdKx7/VYFqgsUhWNv1foK7FLrPZzVX4e8u' +
+                '6+SpznmKAs/tJR/FZypoNZXrPaqzrYJ2RMCWn2qzD95cctGN8S60L0svK4qoF0kYpnbmDgbuyT6/E1BAq82zhVeiaPKvWABSLZIS' +
+                'h6pGrvuhqngYdJ1uYiC7Nq7iIj53a/q4qv+A+pS5cC16SVUff1/zAJF1mKZRxZ/4c940zOCvXhG7sJXbL932juAvtXgW9ZdyhaPU' +
+                'QF1Q8rT+y1e56DJjyWzgQnyJjIc3uUGBxvOi9G0ccM+/+MyxEhWs6seNAiixUaK5xNpHE5c1cvFtM+nS96DbM0L5GUfh4NfOA+PH' +
+                'wQ4Boa1QH9a/9cXYiJ3HcpIYHfIJeSgneb/s5HTv/AJuBglLKJlD82qca7vkZ2NiqOGxHaEI/EJooKLIiSMtllIM0X4ngXDz7Ztj' +
+                'uuz8o5GPM9SvpTT0UeCzRnZRendxULw4IVV47j7+n/OtZLMMBPDQPb9MqlCadOE6RZtRfWQfU4LOAsMZR047ouaaUqUuOahR6SRa' +
+                'nu0Q2TqOwsu52p8UFUhdbxj4eiaXhGyucXAxjcIXBPQK8pSma+YSwQ7SwoBQIghASufQAT8ot4cK+3CMn3pvkvbNE3vSRWZ9zq+U' +
+                'fIWl+b5oXF+P7ceVdim6yx+Yvof26m4FZbeWfxkGMLtTVvx0m/JDF9QZii4jxdCYTdpb9+uR1BVeM5QocVWyzwYOHkjIB4OyL5XZ' +
+                'nb5FSxFEZWHq6CA18VzyJh20vB1/MwcdYoU7ZQhUgH7namyxbJXzHOVSAO4wWwtWlB1EKXv6r7v6f730kOXK/TCulaX0wDIppCLq' +
+                'uCQZFV4/LW1hL/rv4e8s1CQrp4f5faBMYriz2KCqNKAogHBSzDTaGJ5u6M6vUzJDr00ie+oorYRrfkuv8KnTQ2Yrm5lNR9ZeVcbG' +
+                'PWld5cEmTU4KGy6Xmt1RZNUQO3ojQoBehCdVqPuEWFCa6QXtEtmbGRnoTWFi8oglvU3QJYQ3QABx69dScvx5jmxzkQma8FO9fUX9' +
+                'vpwtMG/NLMavjXMqSclcA/QMs/SxGi7pDXMXlXcD+rdlgPBQl/xlC8uJGvjCW2FtLZ6sy+SHHcconzbCgH5zncDtETme894Y+oaE' +
+                'UWu//A88HqEICVRPrRM8S01af9jTZhiJTIytUXevbJahzouk6pc4n3AzzGwGejkqHbiJ4onNcBrzOaSIMTYiaSqJAW6jlSLanjP7' +
+                'PpAa9JCHyBMdEwRy9SgbJYBfoCR6uZz5tBwoHJKRKEZjCp6Jk9j1Gh1e8fuJ5y1akSuwvkOvWogP+iGCiFT9RZOtImGWViumO6Oa' +
+                '/GsbncUhDV8TckYt6Di6YQ/FV7FTNDIlp30+N00vW5QkYOo5EPBhCujKIqQFtBJ/FoOuMUQblxf4+qejtTXDbR3Q6BesMM5Wc2Qh' +
+                'PycnKyAhMs9D6DyITpt76IAg2Mh5Ou/pZ0bbF+83FUmnZiNEAYxpwP8afZbtNeSgiFmboyk6X7U4K1040nAbZyLWsIV1vqSgug/M' +
+                'Cu5GrrGDLKrdokEi27ovDM+KgXo2cQQx+lgkeu0aJA1aZ5X7rq/+5Vozbh6wYlMAgTj6etBBg4EC6pBUBvmHZkL+EelKJzM1fhZ/' +
+                'XLc5Y4R41m+dbJnKlXKe5hvEDX7IYm9o0lTRBi56MTHleQquSd5pk6284VK7BflCcNuuVMYJotd5BiaAnfOjQXToV1RKr7t3n7Xy' +
+                'ONhJ1fbR837hFW6aNtO+iUKw3vJ/6rNRCfZ3p9Fj7dVB5cpuDdnIw155foXqdRGiUWtDDogryagFPHsyCWan/i7QPi0Y172E1V+1' +
+                'JndvunJGqulU95rQyqTDJnX+CvmdCBLEMVQkfhdnietVGSfZHu9AhuCKTfnpl5yYrRb9oN/7d8Ra4jKyOtx6vPzjfmsyH1GtiQi6' +
+                'uNgAL3vtlO9Y6RhMDptgc3HAQOBb/81LN6UGJTnJyNU0AgqfCibPtkEppGQmyBAA' +
+                '">',
+                b1: '<img alt="" src="data:image/webp;base64,' +
+                'UklGRm4NAABXRUJQVlA4IGINAAAwPQCdASqgAKAAPnk2lkikoqIqJtSb8UAPCWUGcAzL0nGRt7ulAVPT9uAruE9ADpibUHbe7Kvv' +
+                'c1H6+CBsgm4ogD3ZePjwv6Af6d9GbQm9Yewb0tDbm9sYGa1xE3/6v3skHg/Pr7ixViLnbPYBou9G5leRa+AoWYOwHvgw4BGrXf1m' +
+                'cNu1S2Nzd2NCy2vEAdYsS/YpUF6qT7ie5LQfxMKgcS3ye+cl/QsPPNE08YuAl3/Pg+W7bjA+GCrAM5lTqmV1Rq2JG82GE/a6C8a+' +
+                'cUSl2CuNRECAaNJSUTTzuDSH+nNI/hvVVRlnajrcf5q4y8GA1yMXf93tuHyJs5udCqm5w2E55EP2v/6me0uN9cj687bKN79d+Iks' +
+                'IPFClodVJ0i+u11sTP5WIPb/6xd9SbOYbbSWqsRQ42xRooIcLDOETkpZ20CEnBcyK9nypMrn1Jn2UE3QkNIGyphHZ4WMc13BuZJP' +
+                '0Gy9sNc5cMYtnBWqjykBCyO8tICbhBx1zQaOXUnkzD7SpYEW/IdG2ksU6ScAbX9cjIBgPQ/JX7ukvMiuBRrBZ8QwQdNkVs3vUYec' +
+                '3UzU5cFyI9hSPAdM92xvL2zl9Y97P4WZ9wuegpZ3EYtMpNOcO+BflXW9i3SJP3TG9j9X3bUt5jnwvwHWMTduT8ZLwAAA/vtFzcRr' +
+                'O1s3YMenv1NBS1RgKF7b8kxImRv4GyaYi/7ZH6hqjY/Zy7Ovx0/xIraylnWw6Iiv0tGZiPMcIsuVXcYi425Z8YDvJlI3mJIxVobq' +
+                'dFvHLU/xLxLFPWGGPTDxMFG3ND8ISWw1hM42872h82CLtE0HwYCe6bS9/vgkQkbFIjRphL1jf1BOA7pOMZMj/vddMqmHdVxuMA57' +
+                'b3zunc+m+HP2IT8RFnYKNkS5FfaYzvs45vTVcCmyPY0iraeFZiG44moU8108QgZvbp0M7nZn8Kzz6ohd4beM6yDb/j5XRK/rHTcF' +
+                'YvWpx4gYROQsn8H7nAAckVCXWthi9zOmO4WQUT9dzjzeUuhjs114NXtTK+5fsI9vAvtA/ylR2Xd7uLB7JN0qTcxPpfkoApZ0joOH' +
+                'Ws4Q9WQXSD6ky+t1B/JFcXo7Kcv8BlKP0fpQcX8JshjyUhBC3lQfjsX9fsFxP8zhj+3uTJlnXgN1XTYnFbQgD2E/cpNAFX+g0BdI' +
+                'HHF6M+tdgjBL/tOi6TUfqduShlj7rjC3V6SXHzdM8iUKT3RRfeYNk0PQzbTf/VfLMjirDQhzOFZco23wgJQ86j3AHFtqTxstCXMQ' +
+                'D6bp5/V8VIoSrX6WJ8AzqfoLLb4r6kDItXNPVgbhs73Fjn6mJte9U73UmcDjL3/ra+EIuc+ZwCG+EXCLrqgXO6/hFTuVfYkB/WJz' +
+                'p+3c/p9fZiTqeM7CB98mx6fnwoHwZ+r6iOYPaeWaXNxdZnBNERs9D6Lse7v7HboB6iYPgaDS80UhiLI24ZZyVslbveUks9OD8VkM' +
+                'Qs+X3RLVFMqlZILwRGAudVZ2sgEJBtOPD6tLIdnRYpGW+mcA63ncPll/O+LU3SY3PJcfy3Zo2aBR+YAR0r35aLhMFYY5b0PQUVKf' +
+                'Qq5kZ13nLuRDPCR8/2bwDoYx0QTppQjhyZPmfRAV39qOqSEDmOQlMIzye3gNrMU4SptbYayvjC7qIzpgqjgc5GBBhPnwj3ESfIaW' +
+                'QxFQbj0KHCLdAGfPfIFJvxaVQw9QxBVM3Lb443m76k23/a54L0GxCRqoeRd34SN1Wjdaceg166h/9wirRG+SB6mYz3mXWB9XHS4c' +
+                'KVJJlKJqkexVQjxGgmp5G3p5XPBdMsJ0KX3f80/6zqDzzReS7yuOtEwYUPi9U7nU1jouB5jJaaYULqzMd/37/vVI30ejS1CjSgJF' +
+                '/pWNJppwZEczBfubP3XraTuxYpLcK6/TYKIj0RNrDTnnqYmksPR4kWODVPVYByS6aVTb4M53awtN4WLjlHX8Z8OsH79ZueXN8IxB' +
+                'EjX07CN7L0W0GsuL0nPTbUi2jLd8cJ4Qm0VAnK3aPxcghd66Bgqn2AH7jguKLllwVNQ7YKqOEzHvLjOMiGA6W9JG3ucHGWZc+KOZ' +
+                'RIIe/UcIfQQfQf+9GxgflrW/FCrEogxEZ6KQoR5gRpFL9WwnjWsTnvPH7D8RYxRmxKvlf9cyixRfJusSmYOvyV+e3ASFH0pffHuO' +
+                'sSMrZ1qPHnqBxtG2pA/NqrFpxFU43czVHWrWYAtGJftbLNzn6GtHJZ4KMMnHczuaTFGMZSM2P1k4WipVfksTZaHOznEPvubS3Oyd' +
+                'Z/pNBzlE6rAD9oXLxfHNofLCNOGC7TQvKFDQq1j2b5w//T+ZFSGOjDEXs/28+N7kbp93Exw3Kgy3RbVAp/rEGpgOz0HYa19knzcT' +
+                'orLzYYxT0r8YH5n7pBH2etTcklx+8Z1YyQgh8fMJ+8BNOvel9E1GefTEf//jgOD6ZLOl/DG+xhl4zwpvVwUt4uBRU0oUWZ5eNyV+' +
+                '9/YIKJuOp76WBbdikD/ij7Yl2K4uPM5r2kauaToYBm5wFDNbW9lWIdKp4mZiFhmnoRwdDMBgTCvphz7B9DfOePkEavsqF0HT1GCt' +
+                'AQ/KmRJiiCqjMm9iqBtx6U/LT5uWeVqszh2XfdYWyXog8nYV2EYmXlGGelFDKbaJ3eJVkysxpn+pUHmAHlJSvUecqmc7khzF+NSe' +
+                '9hnFq7w6vi+EILZ363Biv6HrTs79lLvT1dKaz+cGJMK6Ke0SQdc3C8RTBrZN2w9i3xFRWnItYjwffmT8zmaunzC0hsYoOwRrvKHT' +
+                'ls8Y/1MRS8GyU0WXDkTwcQq08yKoFs38T30lrvqFpGTRdkU74px25vhBPWMS2NP+dsSkVwD4r3j9gQSEHZFsYi7h54dVb9OYKoiM' +
+                'xzOQJps/dFdfuguHQLZRzqleYWq7cGu6hKO2q5+HA0izCvHn3unK6fOZHw37Uc20dtemhxeSse2W43N+OXJDvkTneQ7rQ9TJ3Qb8' +
+                'R8C5J9ev0dyHkgjyBCEZ7WwLhHXlKk7UfRmGHfEBWQP2Nl57etba/EZF84iFeoTg7TCyUIqaKUG1JgU5ajaT+KI3sZbaI2qdauBB' +
+                'WfiPj8Ie8rXd/m0mPj32KDPAm9Wch/ISt5c9xz447RiNEneqL1JpejG/o+gNkLxlkSqiFy4Ec+eW32iT7bkAZqX7XtCDFZO3VNvs' +
+                'xAett1UUBAq/sywECLuG3ZWDNjKcS9HTjAlfdVaju6XVdHQ96mGZip+JXj/UkFx5B4OvfkKcKvwBXnUES+SUZQS2MPkElH8xR+cP' +
+                'tVEbqIhfgbnvo5FOAp+M7Ww3crNFoMFjx+fEQx5csIKu3RsBSMemvtOYGJO1DkmHDt4H8qx6Fct94yesCfbr7Eq1PiakpclRhm4L' +
+                'Q82ky69rxN1y0rY1oubv8plOv6Cs/+9ikZ1V/OuOS/t5M2A+t/ZPJ2wz+sLYl08KYZhdEuP6cuzDqaZa5SaZSS7XY64FCPDMaIqW' +
+                'wQAhIVLmqH2j5U4XjiYstug3oyisgQwCaEgfNC0Q7JQWKXrIpQVAcEkT6fxzdpEhnze451/sZEnep/y5bPFYtfK1KagtuBUzFP9x' +
+                'jeFemspuD7L490qxg+lyiQP21CHzMFyozhNA1Ht5UosvVDWZapQiNh+lWiQqB3XLjx9BDiHhDXYzmogEqnu5Pos1Bz6eYKyKmbxx' +
+                '17c6zuDzzQUawe0C+f007yYFr/f4XYFwnRg+Ryr0Fh+LstFeBtg1hoBPqs3Jkcuwc6rVCMxG5m6PPfxOcKLsFgzePFtricnM1Zfz' +
+                'cS1+OQ871L/og1fktvUI7eRK8poPr1fVjwgTO5f6baQfSYXNLMYcqDDo/DFDOanWkfB7zD11f9asZqETy1bm3MH8rMLwGiT+Eum2' +
+                'DplXJIDPI8KGqpl3F/atMjSKqgQmNyugtOsDj2HzhYNBWspMPycsQEetQGDm2Va8E84gPoyJ7Ox3DSpude+J/yNUvuJKSHkYAYWO' +
+                'GKimV1xXWyj5coMEb02/YjHaUqUJh+Kxx8OPDXriFLv4Lq8d+jnqxln8VhPr3cQbA0DMcSyQldP+hMqKmp4hop016t6xCEenLRDd' +
+                'Ljj7Oh+mZx8ypNNcfj4+vCuqLCiNdI0yisIefw3t2UfLd0QXHQ7xnbVxgB41+INrEvXSiZV5Os2aRr93H8QpGPrCRG6AzvWWwBwW' +
+                '+20oselteEaywM1dAsiUBe27xxwj7+hWuCO5+1biknJytsiACRPn8U0fd+tDg38mnKb2XpT51UWaT81drMXcY6FnOqg2KBFl3ie3' +
+                'ysYhVyLAT87cwPX9nxG1/v117pZDSvQiG5sa8wMe16nZHCvuOW0PgWcabsD3NUsHMlYQIKJyJuuxhiujuY4/5AlG1rhW4c9Az8LJ' +
+                'AUcLLVarSFIScIq1D/0StRDLlY2Z+ww0dcqMvgZkPJvaWuJI7312BkX1+I4nhPmPMGGxAVSjcc532J5kpMdtrQMwxxkqpESQVOnh' +
+                'YDGsg/NUPe+nPNOkGzx5loeKHER0HR7KOwMHcmegYdi30GfSs4nWzPz6E6WXQ+CVKwFNYrsfYgvurzclpUe5/sKuw8JYAAA=' +
+                '">',
+                boy: '<svg viewBox="0 0 64 64"><rect width="64" height="64" fill="#13284F"/><path d="M12 64c2-12 10-16 20-16s18 4 20 16z" fill="#00E5FF"/><rect x="27" y="40" width="10" height="10" rx="4" fill="#E8B58C"/><circle cx="32" cy="29" r="13" fill="#F2C6A0"/><path d="M18 28c0-11 6-16 14-16s14 5 14 16c-3-5-8-7-14-7s-11 2-14 7z" fill="#0A1A33"/><circle cx="27" cy="31" r="1.6" fill="#0A1A33"/><circle cx="37" cy="31" r="1.6" fill="#0A1A33"/><path d="M28 36q4 3 8 0" stroke="#B5683F" stroke-width="1.6" fill="none" stroke-linecap="round"/></svg>',
+            girl: '<svg viewBox="0 0 64 64"><rect width="64" height="64" fill="#13284F"/><path d="M15 62V30c0-12 7-19 17-19s17 7 17 19v32z" fill="#3A1F2B"/><path d="M12 64c2-12 10-16 20-16s18 4 20 16z" fill="#8B7BE8"/><rect x="27" y="40" width="10" height="10" rx="4" fill="#E8B58C"/><circle cx="32" cy="29" r="12.5" fill="#F2C6A0"/><path d="M19 29c0-10 6-15 13-15s13 5 13 15c-5-1-9-5-11-9-2 4-8 8-15 9z" fill="#3A1F2B"/><circle cx="27" cy="31" r="1.6" fill="#0A1A33"/><circle cx="37" cy="31" r="1.6" fill="#0A1A33"/><path d="M28 36q4 3 8 0" stroke="#C0505A" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg>'
+        };
+        const avHTML = (k, u) => AV[k] || `<span>${hx(((u && (u.name || u.username) || 'U').replace(/^@/, '').charAt(0) || 'U').toUpperCase())}</span>`;
+        function setAvatar(u) {
+            const h = avHTML(u.avatar, u);
+            document.querySelector('.acc-av').innerHTML = h; document.getElementById('hAv').innerHTML = h;
+            document.getElementById('hName').innerText = (u.username || '').replace(/^@/, '') || u.name || 'Player';
+        }
+        function buildAvPicker(id, cur, onPick) {
+            const box = document.getElementById(id);
+            box.innerHTML = ['b1', 'g1'].map(k => `<button type="button" class="av-opt ${k === cur ? 'on' : ''}" data-k="${k}"><span>${AV[k]}</span><b>${k === 'b1' ? 'Boy' : 'Girl'}</b></button>`).join('');
+            box.querySelectorAll('.av-opt').forEach(b => b.onclick = () => { box.querySelectorAll('.av-opt').forEach(x => x.classList.toggle('on', x === b)); onPick(b.dataset.k); });
+        }
+        let selAv = 'b1', eAv = '';
+        buildAvPicker('rAvPick', 'b1', k => selAv = k);
+
+        /* ---------- INSTANT FIRST PAINT FROM CACHE ---------- */
+        try {
+            const c = JSON.parse(localStorage.getItem('tota_prof') || 'null');
+            if (c) { document.getElementById('topCoins').innerText = c.c || 0; setAvatar({ avatar: c.a, username: c.n }); }
+            const cg = localStorage.getItem('tota_cats'); if (cg) document.getElementById('catGrid').innerHTML = cg;
+        } catch (e) {}
+
+        /* ---------- POSTERS ---------- */
+        let posterList = [], posterTimer;
+        function openPoster(i) { const p = posterList[i]; if (p && p.link) window.open(/^https?:/i.test(p.link) ? p.link : 'https://' + p.link, '_blank'); }
+        function renderPosters(list) {
+            posterList = list; clearInterval(posterTimer);
+            const w = document.getElementById('posterWrap'), t = document.getElementById('posterTrack'), d = document.getElementById('posterDots');
+            if (!list.length) { w.classList.add('hidden'); return; }
+            w.classList.remove('hidden');
+            t.innerHTML = list.map((p, i) => `<div class="p-slide"><div class="p-item" onclick="openPoster(${i})"><img src="${p.img}" alt="" decoding="async"></div>${p.link ? `<div class="p-bar"><button class="p-view" onclick="openPoster(${i})">VIEW &rsaquo;</button></div>` : ''}</div>`).join('');
+            d.innerHTML = list.length > 1 ? list.map((_, i) => `<i class="${i ? '' : 'on'}"></i>`).join('') : '';
+            const step = () => t.firstChild.offsetWidth + 10;
+            t.onscroll = () => { const k = Math.round(t.scrollLeft / step()); d.querySelectorAll('i').forEach((x, i) => x.classList.toggle('on', i === k)); };
+            if (list.length > 1) posterTimer = setInterval(() => { if (document.hidden) return; const k = (Math.round(t.scrollLeft / step()) + 1) % list.length; t.scrollTo({ left: k * step(), behavior: 'smooth' }); }, 4000);
+        }
+        try { const cp = JSON.parse(localStorage.getItem('tota_posters') || '[]'); if (cp.length) renderPosters(cp); } catch (e) {}
+
+/* ---------- LOGIN / REGISTER ---------- */
+        function goAuth(id) {
+            document.querySelectorAll('.a-screen').forEach(s => s.classList.remove('show'));
+            document.getElementById(id).classList.add('show');
+            document.getElementById('authPage').scrollTop = 0;
+        }
+        const toEmail = u => u.toLowerCase().replace(/^@/, '').replace(/\s+/g, '') + "@tota.ff";
+
+        function handleLogin() {
+            if (!auth) return noFb();
+            const u = document.getElementById('loginUser').value.trim();
+            const p = document.getElementById('loginPass').value;
+            const btn = document.getElementById('loginBtn');
+            if (!u || !p) return alert("Username aur Password dalo!");
+            btn.disabled = true;
+            auth.signInWithEmailAndPassword(toEmail(u), p).then(r => { try { localStorage.setItem('tota_last_user', u.replace(/^@/, '')); } catch (e) {} db.ref('users/' + r.user.uid).update({ last_login: Date.now() }).catch(() => {}); }).catch(err => {
+                if (err.code === 'auth/operation-not-allowed') alert("Firebase Console > Authentication mein Email/Password enable karo!");
+                else if (err.code === 'auth/network-request-failed') alert("Internet check karo!");
+                else if (err.code === 'auth/too-many-requests') alert("Bahut zyada try ho gaye, thodi der baad try karo.");
+                else alert("Username ya Password galat hai!");
+                btn.disabled = false;
+            });
+        }
+        function pendingProfile(uid) { try { const p = JSON.parse(localStorage.getItem('tota_pending') || 'null'); return p && p.uid === uid ? p : null; } catch (e) { return null; } }
+        function saveProfile(uid, data) {
+            return db.ref('users/' + uid).update(data).then(() => { try { localStorage.removeItem('tota_pending'); } catch (e) {} }, () => saveProfileKeys(uid, data));
+        }
+        function saveProfileKeys(uid, data) {
+            const ref = db.ref('users/' + uid), keys = Object.keys(data);
+            const run = ks => Promise.all(ks.map(k => ref.child(k).set(data[k]).then(() => null, () => k === 'phone' ? ref.child(k).set(String(data[k]).replace(/\D/g, '').slice(-10)).then(() => null, () => k) : k))).then(r => r.filter(Boolean));
+            const done = () => { try { localStorage.removeItem('tota_pending'); } catch (e) {} };
+            return run(keys).then(bad => {
+                if (!bad.length) return done();
+                return new Promise(r => setTimeout(r, 1200)).then(() => run(bad)).then(b2 => {
+                    if (!b2.length) return done();
+                    const e = new Error('Save nahi hua: ' + b2.join(', ')); e.failed = b2; throw e;
+                });
+            });
+        }
+        // Agar profile (number etc.) save nahi ho payi thi, login ke baad apne-aap dobara save hoti hai
+        function repairProfile(uid, u) {
+            const pp = pendingProfile(uid); if (!pp) return;
+            if (u && u.phone) { try { localStorage.removeItem('tota_pending'); } catch (e) {} return; }
+            const d = Object.assign({}, pp.data); if (u && u.coins != null) delete d.coins;
+            saveProfile(uid, d).catch(() => {});
+        }
+
+        // Gmail normalise: dots / +tag / googlemail ko ek hi maana jaata hai (a.b@gmail.com == ab@gmail.com)
+        const normEmail = e => { const m = String(e || '').trim().toLowerCase().match(/^([^@\s]+)@([^@\s]+\.[^@\s]+)$/); if (!m) return ''; let l = m[1], d = m[2]; if (d === 'googlemail.com') d = 'gmail.com'; if (d === 'gmail.com') l = l.split('+')[0].replace(/\./g, ''); return l + '@' + d; };
+        const emailKey = e => normEmail(e).replace(/[.#$\[\]\/]/g, ',');
+
+        function handleSignup() {
+            if (!auth) return noFb();
+            const g = id => document.getElementById(id).value.trim();
+            const first = g('rFirst'), last = g('rLast'), user = g('rUser').toLowerCase().replace(/^@/, '');
+            const code = g('rCode'), phone = g('rPhone'), email = g('rEmail');
+            const pass = document.getElementById('rPass').value, pass2 = document.getElementById('rPass2').value;
+            const btn = document.getElementById('signupBtn');
+
+            if (!first || !user || !phone || !email || !pass) return alert("Saari required details bharo!");
+            if (!/^[a-z0-9_.]{3,20}$/.test(user)) return alert("Username 3-20 characters, sirf a-z, 0-9, _ aur . allowed hai!");
+            if (!/^[0-9]{10}$/.test(phone)) return alert("10 digit ka phone number dalo!");
+            const eKey = emailKey(email); if (!eKey) return alert("Sahi Gmail / Email dalo!");
+            if (pass.length < 6) return alert("Password kam se kam 6 characters ka rakho!");
+            if (pass !== pass2) return alert("Password match nahi kar raha!");
+
+            btn.disabled = true;
+            let created = false, cuser = null;
+            // Step 1: username = login ID, Firebase Auth ek username sirf ek baar banne deta hai
+            auth.createUserWithEmailAndPassword(toEmail(user), pass).then(res => {
+                created = true; cuser = res.user;
+                // Step 2: Gmail ek hi account ke naam ho sakta hai (emails/<gmail> = uid)
+                return db.ref('emails/' + eKey).transaction(cur => cur ? undefined : res.user.uid).then(r => {
+                    if (!r.committed || r.snapshot.val() !== res.user.uid) { const e = new Error('email taken'); e.code = 'tota/email-taken'; throw e; }
+                    return res;
+                });
+            }).then(res => {
+                try { localStorage.setItem('tota_last_user', user); localStorage.setItem('tota_reg', '1'); } catch (e) {}
+                const prof = { name: (first + " " + last).trim(), first_name: first, last_name: last, username: "@" + user, phone: code + phone, email: email, avatar: selAv, coins: 0, time: Date.now() };
+                try { localStorage.setItem('tota_pending', JSON.stringify({ uid: res.user.uid, data: prof })); } catch (e) {}
+                return saveProfile(res.user.uid, prof);
+            }).then(() => {
+                alert("Account ban gaya! ");
+            }).catch(err => {
+                if (err.code === 'tota/email-taken') {
+                    try { localStorage.removeItem('tota_pending'); localStorage.removeItem('tota_reg'); } catch (e) {}
+                    if (cuser) cuser.delete().catch(() => { auth.signOut(); });
+                    alert("Ye Gmail / Email already use ho chuka hai! Dusra Gmail use karo.");
+                }
+                else if (err.code === 'auth/email-already-in-use') alert("Ye username already use ho chuka hai! Dusra username chuno.");
+                else if (err.code === 'auth/operation-not-allowed') alert("Firebase Console > Authentication mein Email/Password enable karo!");
+                else if (created && /permission/i.test(err.message || '') && !err.failed) {
+                    if (cuser) cuser.delete().catch(() => { auth.signOut(); });
+                    alert("Gmail check nahi ho paya. Firebase Rules mein 'emails' node ka rule add karo (rules mere message mein diye hain).");
+                }
+                else if (created) alert("Account ban gaya lekin ye details save nahi hui: " + ((err.failed || []).join(", ") || "profile") + ". Firebase Realtime Database Rules mein users/$uid ke andar in fields ka write allow karo. Login ke baad app phone number dobara poochega.");
+                else alert("Register Error: " + err.message);
+                btn.disabled = false;
+            });
+        }
+        /* ---------- APP DATA ---------- */
+        let joining = false, dataLoadedFor = null;
+
+        /* ---------- HISTORY (deposit / withdraw alag-alag) ---------- */
+        let histT = 'dep';
+        const isDep = t => t.match === 'Deposit via UPI Gateway', isWd = t => t.match === 'Withdraw Request';
+        function histItem(t) {
+            let statusColor = t.type == 'plus' ? 'var(--green)' : 'var(--red)'; let msg = t.match;
+            if (t.status === "Pending") { statusColor = "var(--gold)"; msg = (t.match === "Withdraw Request" ? "Withdraw Pending" : "Deposit Pending") + " "; }
+            else if (t.status === "Approved" && t.match === "Deposit via UPI Gateway") { msg = "Deposit Approved "; }
+            else if (t.status === "Rejected") { statusColor = "var(--red)"; msg = (t.match === "Withdraw Request" ? "Withdraw Rejected " : "Deposit Rejected "); }
+            else if (t.status === "Success" && t.match === "Withdraw Request") { statusColor = "var(--green)"; msg = "Withdraw Paid "; }
+            else if (t.type === 'minus' && t.match !== "Withdraw Request") { msg = " Joined: " + t.match; }
+            return `<div class="history-item" style="border-left: 4px solid ${statusColor}"><div><b>${hx((t.em ? '🚨 Emergency ' : '') + msg)}</b><br><small>${new Date(t.time).toLocaleString()}</small>${t.em ? `<br><small style="color:var(--red)">16% fee &#8377;${t.fee} cut &middot; you get &#8377;${t.net}</small>` : ''}${t.status === 'Pending' && (isDep(t) || isWd(t)) ? `<br><b class="co-t" style="font-size:14px;color:${t.em ? 'var(--red)' : 'var(--gold)'}" data-dl="${(t.time || 0) + (t.em ? 108e5 : 864e5)}"></b>` : ''}</div><div style="color:${statusColor}">${t.type == 'plus' ? '+' : '-'}\u20B9${t.amt}</div></div>`;
+        }
+        function renderHist() {
+            const f = histT === 'dep' ? isDep : (histT === 'wd' ? isWd : (t => !isDep(t) && !isWd(t)));
+            const l = txCache.filter(f), none = { dep: 'Koi deposit nahi hua.', wd: 'Koi withdraw nahi hua.', oth: 'Koi match / coin history nahi.' }[histT];
+            document.getElementById('histList').innerHTML = l.length ? l.map(histItem).join('') : `<p style="color:#8FA9C9; font-size:12px; text-align:center; margin-top:30px;">${none}</p>`;
+        }
+        let phAsked = false;
+        function maybeAskPhone(uid) {
+            if (phAsked) return; phAsked = true;
+            setTimeout(() => { if (!(curProfile && curProfile.phone) && !pendingProfile(uid)) document.getElementById('phBg').classList.add('show'); }, 4000);
+        }
+        function savePhone() {
+            const v = document.getElementById('phIn').value.trim();
+            if (!/^[0-9]{10}$/.test(v)) return alert("10 digit ka phone number dalo!");
+            const uid = auth.currentUser && auth.currentUser.uid; if (!uid) return;
+            db.ref('users/' + uid + '/phone').set('+91' + v).catch(() => db.ref('users/' + uid + '/phone').set(v)).then(() => { document.getElementById('phBg').classList.remove('show'); alert("Phone number saved!"); })
+                .catch(() => alert("Phone number save nahi hua. Firebase Rules mein users/$uid/phone ka write allow karo."));
+        }
+        function histTab(t, el) { histT = t; document.querySelectorAll('.h-tabs button').forEach(b => b.classList.toggle('on', b === el)); renderHist(); }
+        function renderWHist() {
+            const d = txCache.filter(isDep).slice(0, 5), w = txCache.filter(isWd).slice(0, 5);
+            document.getElementById('wHist').innerHTML = (d.length ? '<div class="wh-t"><svg class="ic" style="width:14px;height:14px;vertical-align:-2px"><use href="#i-plus"/></svg> DEPOSIT</div>' + d.map(histItem).join('') : '') + (w.length ? '<div class="wh-t">WITHDRAW</div>' + w.map(histItem).join('') : '') || '<p class="empty">No deposit / withdraw yet.</p>';
+        }
+
+        function loadAppData(uid) {
+            if (dataLoadedFor === uid) return;   // listeners sirf ek baar lagte hain (pehle baar-baar lag rahe the = slow app)
+            dataLoadedFor = uid; ld.start('u'); ld.start('tx'); ld.start('c');
+
+            db.ref('users/' + uid).on('value', s => {
+                ld.end('u'); const u = s.val(); if (!u) { repairProfile(uid, null); return; } repairProfile(uid, u);
+                curUserBal = u.coins || 0; curProfile = u; if (!u.phone) maybeAskPhone(uid);
+                document.getElementById('topCoins').innerText = curUserBal;
+                document.getElementById('wCoins').innerText = "₹" + curUserBal;
+                document.getElementById('pNameDisplay').innerText = u.name;
+                document.getElementById('pUserTag').innerText = u.username;
+                fillGameBox(u); setAvatar(u); try { localStorage.setItem('tota_prof', JSON.stringify({ a: u.avatar || '', n: u.username || '', p: u.phone || '', c: curUserBal })); } catch (e) {}
+            });
+
+            db.ref('admin_settings/qr_url').once('value', s => { if (s.val()) document.getElementById('adminQR').src = s.val(); });
+
+            // History + wallet stats
+            db.ref('transactions/' + uid).on('value', s => {
+                ld.end('tx');
+                const l = document.getElementById('histList');
+                let items = []; s.forEach(c => { items.push(c.val()); }); txCache = items;
+                let dep = 0, win = 0, earn = 0;
+                items.forEach(t => {
+                    if (t.match === "Deposit via UPI Gateway" && t.status === "Approved") dep += t.amt;
+                    if (t.type === 'plus' && /^Winning/.test(t.match || "")) win += t.amt;
+                    if (t.type === 'plus' && t.status !== 'Pending' && t.status !== 'Rejected' && /^(Winning|Admin Added|Coin Code|Bonus)/.test(t.match || "")) earn += t.amt;
+                });
+                document.getElementById('wDep').innerText = "₹" + dep;
+                document.getElementById('wWin').innerText = "₹" + win;
+                document.getElementById('wEarn').innerText = "₹" + earn;
+
+                items.sort((x, y) => (y.time || 0) - (x.time || 0)); txCache = items;
+                renderHist(); renderWHist(); renderOrders();
+            }, err => {
+                ld.end('tx'); document.getElementById('histList').innerHTML = `<p style="color:var(--red); font-size:12px;">History load nahi hui: ${err.message}</p>`;
+            });
+
+            // Sirf is user ke joins (poore match_joins ki jagah)
+            db.ref('match_joins').orderByChild('user_id').equalTo(uid).on('value', s => {
+                myJoins = []; myJoinRecs = [];
+                s.forEach(c => { myJoins.push(c.val().match_id); myJoinRecs.push(c.val()); });
+                renderMatchesFiltered();
+            }, err => { toast('Joins load nahi hue: ' + err.message); });
+
+            db.ref('posters').on('value', s => {
+                const l = []; s.forEach(c => { l.push(c.val()); });
+                l.sort((a, b) => (a.time || 0) - (b.time || 0));
+                renderPosters(l); try { localStorage.setItem('tota_posters', JSON.stringify(l)); } catch (e) {}
+            });
+            fetchMatchesFast();
+            loadCats();
+        }
+        /* ---------- MATCHES ---------- */
+        let renderTimer = null;
+        function scheduleRender() { clearTimeout(renderTimer); renderTimer = setTimeout(renderMatchesFiltered, 60); }
+
+        function fetchMatchesFast() {
+            const ref = db.ref('matches');
+            const upsert = s => {
+                const o = Object.assign({ id: s.key }, s.val());
+                const i = matchesCache.findIndex(x => x.id === s.key);
+                if (i > -1) matchesCache[i] = o; else matchesCache.push(o);
+                scheduleRender();
+            };
+            ref.on('child_added', upsert);
+            ref.on('child_changed', upsert);
+            ref.on('child_removed', s => { matchesCache = matchesCache.filter(x => x.id !== s.key); scheduleRender(); });
+            ref.once('value', () => renderMatchesFiltered());
+        }
+
+        function filterMatches(type, el) {
+            currentFilter = type;
+            document.querySelectorAll('.f-tab').forEach(t => t.classList.remove('active'));
+            el.classList.add('active');
+            renderMatchesFiltered();
+        }
+
+        function openMatches(cat, st, title) {
+            if (cat) { const has = x => matchesCache.some(m => m.cat === cat && (m.status || 'upcoming') === x); st = has('live') ? 'live' : (has('upcoming') ? 'upcoming' : (has('end') ? 'end' : 'live')); }
+            curCat = cat; currentFilter = st;
+            document.getElementById('mpTitle').innerText = title || 'MATCHES';
+            document.querySelectorAll('#matchesPage .f-tab').forEach(t => t.classList.toggle('active', t.dataset.s === st));
+            document.getElementById('matchesPage').classList.add('overlay-active');
+            renderMatchesFiltered();
+        }
+        function closeMatches() { document.getElementById('matchesPage').classList.remove('overlay-active'); }
+
+        function loadCats() { db.ref('categories').on('value', s => {
+            ld.end('c');
+            const g = document.getElementById('catGrid'); let h = "";
+            s.forEach(c => { const v = c.val(); if (v.active === false) return; h += `<div class="cat" onclick="openMatches('${c.key}','live','${(v.name || '').replace(/'/g, '')}')"><div class="cat-img" style="background-image:url('${v.img || ''}')"></div><div class="cat-name">${v.name}</div></div>`; });
+            g.innerHTML = h || `<p style="color:#8FA9C9; font-size:12px; padding:0 15px;">No game modes added yet.</p>`;
+            try { localStorage.setItem('tota_cats', g.innerHTML); } catch (e) {}
+        }, e => { ld.end('c'); document.getElementById('catGrid').innerHTML = '<p style="color:#00E5FF; padding:0 15px;">Categories load nahi hui: ' + e.message + '</p>'; }); }
+
+        function updateCounts() {
+            const gu = myJoinRecs.map(j => String(j.gamer_uid)); let k = 0, w = 0;
+            matchesCache.forEach(m => { if (m.results) Object.values(m.results).forEach(r => { if (gu.includes(String(r.uid))) { k += r.kills || 0; w += r.prize || 0; } }); });
+            document.getElementById('sMatches').innerText = myJoins.length; document.getElementById('sKills').innerText = k; document.getElementById('sWon').innerText = w;
+            const n = st => matchesCache.filter(m => (m.status || 'upcoming') === st).length;
+            document.getElementById('cUp').innerText = n('upcoming'); document.getElementById('cLive').innerText = n('live'); document.getElementById('cEnd').innerText = n('end');
+        }
+
+        function plr(m) { const p = Object.values(m.players || {}); if (!p.length) return ''; return `<div class="pl-row"><b>Players Joined (${p.length})</b><div>${p.map(n => `<span>${hx(n)}</span>`).join('')}</div></div>`; }
+        function renderMatchesFiltered() {
+            updateCounts();
+            if (!document.getElementById('matchesPage').classList.contains('overlay-active')) return;
+            const con = document.getElementById('matchList');
+            const rk = { live: 0, upcoming: 1, end: 2 }; const f = matchesCache.filter(m => (currentFilter === 'all' || (m.status || 'upcoming') === currentFilter) && (!curCat || m.cat === curCat)).sort((a, b) => currentFilter === 'all' ? rk[a.status || 'upcoming'] - rk[b.status || 'upcoming'] : 0);
+            if (!f.length) { con.innerHTML = `<p style="text-align:center; color:#8FA9C9; margin-top:40px;">No matches found.</p>`; return; }
+            con.innerHTML = f.map(m => {
+                const mid = m.id, st = m.status || 'upcoming', joined = myJoins.includes(mid);
+                const rj = m.joined_count || 0, max = m.max_slots || 48;
+                const bc = st === 'live' ? 'bg-red' : (st === 'end' ? 'bg-green' : 'bg-grey');
+                const head = `<div class="m-badge ${bc}">${st === 'end' ? 'ENDED' : st.toUpperCase()}</div>
+                    <div class="m-banner" style="background-image:url('${m.bg || ''}')"></div>
+                    <div class="m-tags"><span class="tag">${m.type || ''}</span><span class="tag t2">${m.map || ''}</span></div>
+                    <div class="m-title">${m.title}</div>`;
+                if (st === 'end') {
+                    return `<div class="match-card" style="min-height:0">${head}
+                        <div class="m-footer"><button class="btn-action" style="background:var(--accent); width:100%" onclick="viewWinners('${mid}')">VIEW WINNERS</button></div></div>`;
+                }
+                let pz = `<div class="p-box"><span class="p-label">Time</span><span class="p-val">${m.time || '-'}</span></div>${m.per_kill_on !== false && Number(m.per_kill) > 0 ? `<div class="p-box"><span class="p-label">Per Kill</span><span class="p-val">&#8377;${m.per_kill}</span></div>` : ''}${Number(m.win_prize) > 0 ? `<div class="p-box" style="grid-column:1/-1"><span class="p-label">Winner Prize</span><span class="p-val" style="color:var(--gold)">&#8377;${Number(m.win_prize)}</span></div>` : ''}`;
+                let rzRows = '', rzTot = 0, rzCnt = 0;
+                const pc = Number(m.prize_count) || 10; for (let i = 1; i <= pc; i++) { const v = Number(m.prizes && m.prizes['Rank_' + i]) || 0; if (m.prize_count || v > 0) { rzRows += `<div class="rz-r"><span>Top ${i}</span><b>&#8377;${v}</b></div>`; rzTot += v; rzCnt++; } }
+                const rz = rzCnt ? `<div class="rz" onclick="this.classList.toggle('open')"><div class="rz-h"><span>Prize Pool &middot; Top ${rzCnt}</span><b>&#8377;${rzTot}</b><svg class="ic"><use href="#i-chev"/></svg></div><div class="rz-b"><div>${rzRows}</div></div></div>` : '';
+                let btn;
+                if (joined) btn = `<button class="btn-action" style="background:var(--green); color:#04122E" onclick="viewRoom('${mid}')">VIEW ROOM</button>`;
+                else if (rj >= max) btn = `<button class="btn-action" style="background:var(--grey)">FULL</button>`;
+                else btn = `<button class="btn-action" onclick="openJoinPortal('${mid}', '${m.title}', ${m.fee_coins})">JOIN &#8377;${m.fee_coins}</button>`;
+                return `<div class="match-card" style="min-height:0">${head}
+                    <div class="prize-pool" style="padding:0 12px 10px; grid-template-columns:repeat(2,1fr)">${pz}</div>${rz}${plr(m)}
+                    ${m.alert ? `<div class="min-alert">${m.alert}</div>` : ''}
+                    <div class="m-footer" style="flex-direction:row; align-items:center; gap:12px">
+                        <div style="flex:1"><div class="m-progress"><div class="m-fill" style="width:${(rj / max) * 100}%"></div></div><div style="font-size:10px; margin-top:4px; color:#8FA9C9">${rj}/${max} Joined</div></div>${btn}
+                    </div></div>`;
+            }).join('');
+        }
+
+        function viewWinners(mid) {
+            const m = matchesCache.find(x => x.id === mid) || {};
+            db.ref('matches/' + mid + '/results').once('value', snap => {
+                let rows = []; snap.forEach(c => { rows.push(c.val()); });
+                rows.sort((a, b) => (b.prize || 0) - (a.prize || 0) || (b.kills || 0) - (a.kills || 0));
+                const tr = (r, i, dec) => `<tr><td>${i + 1}</td><td>${r.name}</td><td>${r.kills || 0}</td><td>${dec ? Number(r.prize || 0).toFixed(2) : (r.prize || 0)}</td></tr>`;
+                const tbl = (t, list, dec) => `<table class="rt"><thead><tr><th colspan="4" class="rt-t">${t}</th></tr><tr><th>#</th><th>Player Name</th><th>Kills</th><th>Won &#8377;</th></tr></thead><tbody>${list.map((r, i) => tr(r, i, dec)).join('')}</tbody></table>`;
+                const wins = rows.filter(r => (r.prize || 0) > 0);
+                document.getElementById('winnerContentList').innerHTML = `<div class="m-banner" style="background-image:url('${m.bg || ''}'); border-radius:10px"></div>
+                    <div class="m-title" style="color:var(--gold); padding:10px 0 4px">${m.title || ''}</div>
+                    ${m.comment ? `<div style="color:var(--neon); font-size:13px; margin:8px 0"><b>Comment</b><br>${m.comment}</div>` : ''}
+                    ${rows.length ? tbl('Match Result', rows, false) : `<p style="text-align:center; color:#8FA9C9;">Result not declared yet.</p>`}`;
+                document.getElementById('winnerPortal').classList.add('overlay-active');
+            });
+        }
+        function closeWinnerPortal() { document.getElementById('winnerPortal').classList.remove('overlay-active'); }
+/* ---------- ADD MONEY ---------- */
+        function initiateGatewayPayment() {
+            const val = document.getElementById('depositAmount').value.trim();
+            currentGatewayAmt = parseInt(val);
+            if (!currentGatewayAmt || currentGatewayAmt < 1) return alert("Amount enter karein!");
+            document.getElementById('gatewayDisplayAmt').innerText = "₹" + currentGatewayAmt;
+            document.getElementById('gatewayStep1').classList.add('hidden');
+            document.getElementById('gatewayStep2').classList.remove('hidden');
+
+            let timeLeft = 120;
+            const timerDisplay = document.getElementById('gatewayTimer');
+            clearInterval(gatewayTimerInterval);
+            gatewayTimerInterval = setInterval(() => {
+                let m = Math.floor(timeLeft / 60), s = timeLeft % 60;
+                m = m < 10 ? "0" + m : m; s = s < 10 ? "0" + s : s;
+                timerDisplay.innerText = m + ":" + s;
+                if (timeLeft < 0) { clearInterval(gatewayTimerInterval); alert("Gateway Session Expired!"); closeAddMoney(); }
+                timeLeft--;
+            }, 1000);
+        }
+
+        function submitGatewayPaymentProof() {
+            if (!document.getElementById('payerUpiInput').value.trim()) { tpShow('upiAsk', true); return; }
+            doSubmitProof();
+        }
+        function tpShow(id, on) { const e = document.getElementById(id); if (e) e.style.display = on ? 'flex' : 'none'; }
+        function upiAskCancel() { tpShow('upiAsk', false); const i = document.getElementById('payerUpiInput'); i.focus(); }
+        function upiAskSkip() { tpShow('upiAsk', false); doSubmitProof(); }
+        function showPaySuccess() {
+            const el = document.getElementById('paySuccess'); el.querySelectorAll('i').forEach(x => x.remove());
+            const cols = ['#fff', '#C8FFE6', '#FFE27A', '#9BF2CB'];
+            for (let k = 0; k < 26; k++) { const c = document.createElement('i'), a = Math.random() * 6.283, d = 110 + Math.random() * 140; c.style.cssText = `left:50%;top:44%;background:${cols[k % 4]};--x:${Math.cos(a) * d}px;--y:${Math.sin(a) * d}px;animation-delay:${1 + Math.random() * .25}s`; el.appendChild(c); }
+            el.querySelectorAll('.fill,.ring,.chk,h2,p').forEach(x => { x.style.animation = 'none'; void x.offsetWidth; x.style.animation = ''; });
+            tpShow('paySuccess', true);
+            setTimeout(() => { tpShow('paySuccess', false); closeAddMoney(); }, 3200);
+        }
+        let proofBusy = false;
+        function doSubmitProof() {
+            if (proofBusy) return; proofBusy = true;
+            const userId = auth.currentUser.uid;
+            const username = document.getElementById('pUserTag').innerText;
+            const userUpi = document.getElementById('payerUpiInput').value.trim() || "Not Provided";
+            const reqKey = db.ref('add_money_requests').push().key;
+            const transKey = db.ref('transactions/' + userId).push().key;
+            const t = Date.now(), upd = {};
+            upd['add_money_requests/' + reqKey] = { request_id: reqKey, trans_key: transKey, user_id: userId, username: username, amount: currentGatewayAmt, sender_upi: userUpi, status: "Pending", time: t };
+            upd['transactions/' + userId + '/' + transKey] = { amt: currentGatewayAmt, match: "Deposit via UPI Gateway", type: "plus", status: "Pending", time: t };
+            upd['admin_history/deposits/' + reqKey] = { username: username, amount: currentGatewayAmt, sender_upi: userUpi, status: "Pending", time: t };
+            db.ref().update(upd).then(() => { proofBusy = false; clearInterval(gatewayTimerInterval); showPaySuccess(); })
+              .catch(err => { proofBusy = false; alert("Payment proof submit nahi hua: " + err.message); });
+        }
+
+        /* ---------- ROOM / JOIN ---------- */
+        function viewRoom(id) { db.ref('matches/' + id + '/room').once('value', s => { const r = s.val(); alert(r && r.id ? `ID: ${r.id}\nPASS: ${r.pass}` : "Not ready yet!"); }); }
+        function needDeposit(zero) {
+            document.getElementById('depNeedMsg').innerText = zero ? "Aapke account mein coins nahi hain. Match join karne ke liye pehle deposit karo." : "Aapke account mein coins kam hain. Match join karne ke liye pehle deposit karo.";
+            tpShow('depNeed', true);
+        }
+        function goDeposit() { tpShow('depNeed', false); try { closePortal(); } catch (e) {} openAddMoney(); }
+        let curMId, curMTitle, curFee = 0, selPos = [], maxSel = 1, curType = '';
+        function openJoinPortal(id, title, fee) {
+            if (Number(fee) > 0 && (curUserBal || 0) < Number(fee)) return needDeposit((curUserBal || 0) <= 0);
+            const m = matchesCache.find(x => x.id === id) || {};
+            curMId = id; curMTitle = title; curFee = Number(fee); selPos = []; curType = m.type || 'Solo';
+            maxSel = { '1v1': 1, '2v2': 2, '4v4': 4 }[m.type] || 1;
+            document.getElementById('portMTitle').innerText = title; const sg = savedGame(); document.getElementById('pGameName').value = sg.n; document.getElementById('pGameUid').value = sg.u;
+            document.getElementById('jBal').innerText = curUserBal; document.getElementById('jFee').innerText = curFee;
+            document.getElementById('jHint').innerText = 'Select ' + maxSel + ' spot' + (maxSel > 1 ? 's' : '');
+            const t = m.taken || {}; let h = '';
+            for (let i = 1; i <= (m.max_slots || 48); i++) h += `<label class="pos ${t[i] ? 'off' : ''}"><span>${i}</span><input type="checkbox" ${t[i] ? 'disabled' : ''} onchange="togglePos(${i}, this)"><i></i></label>`;
+            document.getElementById('posGrid').innerHTML = h;
+            document.getElementById('jStep1').classList.remove('hidden'); document.getElementById('jStep2').classList.add('hidden');
+            document.getElementById('joinPortal').classList.add('overlay-active');
+        }
+        function togglePos(i, el) {
+            if (el.checked) {
+                if (selPos.length >= maxSel) { el.checked = false; return alert("You can select only " + maxSel + " spot" + (maxSel > 1 ? "s" : "") + " in " + curType + "."); }
+                selPos.push(i);
+            } else selPos = selPos.filter(x => x !== i);
+        }
+        function toDetails() {
+            if (!selPos.length) return toast("Please select any position");
+            selPos.sort((a, b) => a - b);
+            document.getElementById('jSel').innerText = selPos.join(', '); document.getElementById('jTot').innerText = curFee * selPos.length;
+            document.getElementById('jStep1').classList.add('hidden'); document.getElementById('jStep2').classList.remove('hidden');
+        }
+        const gk = () => 'tota_game_' + (auth && auth.currentUser ? auth.currentUser.uid : '');
+        function fillGameBox(u) {
+            const n = document.getElementById('pgName'), g = document.getElementById('pgUid'); if (!n || !g) return;
+            const sg = savedGame();
+            if (document.activeElement !== n) n.value = (u && u.game_name) || sg.n || '';
+            if (document.activeElement !== g) g.value = (u && u.game_uid) || sg.u || '';
+        }
+        function saveGameBox() {
+            const n = document.getElementById('pgName').value.trim(), g = document.getElementById('pgUid').value.trim().replace(/\s+/g, '');
+            if (!n) return toast("Game name likho!");
+            if (!/^[0-9]{5,15}$/.test(g)) return toast("Sahi UID dalo (sirf number)!");
+            const uid = auth.currentUser && auth.currentUser.uid; if (!uid) return;
+            const b = document.getElementById('pgSave'); b.disabled = true;
+            try { localStorage.setItem(gk(), JSON.stringify({ n: n, u: g })); } catch (e) {}
+            db.ref('users/' + uid).update({ game_name: n, game_uid: g })
+                .then(() => { b.disabled = false; alert("Game name aur UID save ho gaye! Ab match join mein apne-aap aa jayenge."); })
+                .catch(err => { b.disabled = false; alert("Save nahi hua: " + err.message); });
+        }
+        function savedGame() { let s = {}; try { s = JSON.parse(localStorage.getItem(gk()) || '{}'); } catch (e) {} const p = curProfile || {}; return { n: p.game_name || s.n || '', u: p.game_uid || s.u || '' }; }
+        function saveGame(n, g) { try { localStorage.setItem(gk(), JSON.stringify({ n: n, u: g })); } catch (e) {} if (auth.currentUser) db.ref('users/' + auth.currentUser.uid).update({ game_name: n, game_uid: g }).catch(() => {}); }
+        function processJoin() {
+            const name = document.getElementById('pGameName').value.trim(), gUid = document.getElementById('pGameUid').value.trim();
+            if (!name || !gUid) return toast("Enter full game name and UID");
+            if (joining) return;
+            const mid = curMId, sel = selPos.slice(), uid = auth.currentUser.uid, total = curFee * sel.length, title = curMTitle;
+            const btn = document.getElementById('joinBtn'); joining = true; btn.disabled = true;
+            const done = () => { joining = false; btn.disabled = false; };
+            const undo = () => db.ref('matches/' + mid + '/taken').transaction(t => { if (!t) return t; sel.forEach(p => { if (t[p] === uid) delete t[p]; }); return t; });
+            db.ref('matches/' + mid + '/taken').transaction(t => { t = t || {}; for (const p of sel) { if (t[p]) return; } sel.forEach(p => t[p] = uid); return t; }, (e, ok) => {
+                if (e) { done(); return alert("Error: " + e.message); }
+                if (!ok) { done(); return alert("Position already booked, choose another!"); }
+                db.ref('users/' + uid + '/coins').transaction(c => { c = c || 0; if (c < total) return; return c - total; }, (e2, ok2) => {
+                    if (e2 || !ok2) { undo(); done(); if (e2) return alert("Error: " + e2.message); closePortal(); return needDeposit((curUserBal || 0) <= 0); }
+                    const jk = db.ref('match_joins').push().key, tk = db.ref('transactions/' + uid).push().key, upd = {};
+                    upd['match_joins/' + jk] = { match_id: mid, user_id: uid, gamer_name: name, gamer_uid: gUid, positions: sel, time: Date.now(), username: document.getElementById('pUserTag').innerText, match_title: title, match_type: curType, cat_name: ((matchesCache.find(x => x.id === mid) || {}).cat_name || '') };
+                    upd['transactions/' + uid + '/' + tk] = { amt: total, match: title, type: "minus", status: "Approved", time: Date.now() };
+                    // join record + history ek saath save hote hain; fail hua to coins wapas aur position free
+                    db.ref().update(upd).then(() => {
+                        db.ref('matches/' + mid + '/joined_count').transaction(c => (c || 0) + sel.length);
+                        db.ref('matches/' + mid + '/players/' + uid).set(name).catch(() => {});
+                        saveGame(name, gUid); done(); alert("Joined Successfully! Position: " + sel.join(", ")); closePortal();
+                    }).catch(err => {
+                        db.ref('users/' + uid + '/coins').transaction(c => (c || 0) + total);
+                        undo(); done();
+                        alert("Join save nahi hua, coins wapas kar diye: " + err.message + "\nFirebase Rules mein match_joins aur transactions ka write allow karo.");
+                    });
+                });
+            });
+        }
+/* ---------- WITHDRAW ---------- */
+        const WD_MIN = 30;
+        const UPI_APPS = [
+            { id: 'PhonePe', m: 'Pe', ph: 'number@ybl' }, { id: 'Google Pay', m: 'G', ph: 'name@okaxis' }, { id: 'Paytm', m: 'Pt', ph: 'number@paytm' },
+            { id: 'Navi UPI', m: 'Na', ph: 'name@naviaxis' }, { id: 'FamPay', m: 'F', ph: 'name@fam' }, { id: 'BHIM', m: 'B', ph: 'name@upi' }, { id: 'UPI', m: 'U', ph: 'name@upi' }, { id: 'Other', m: '+', ph: 'yourid@bank' }
+        ];
+        let wdApp = '', wdBusy = false;
+        function buildUpiGrid() { document.getElementById('upiGrid').innerHTML = UPI_APPS.map((a, i) => `<div class="upi-opt ${a.id === wdApp ? 'on' : ''}" onclick="pickUpi(${i})"><em>${a.m}</em>${a.id}</div>`).join(''); }
+        function pickUpi(i) { const a = UPI_APPS[i]; wdApp = a.id; buildUpiGrid(); document.getElementById('wdUpi').placeholder = 'Example: ' + a.ph; document.getElementById('wdUpiLbl').innerText = '2. Enter your ' + a.id + ' UPI ID'; }
+        function submitWithdraw() {
+            const amt = parseInt(document.getElementById('wdAmount').value), upi = document.getElementById('wdUpi').value.trim();
+            if (!wdApp) return toast("Select a UPI app first");
+            if (!/^[\w.\-]{2,}@[a-zA-Z]{2,}$/.test(upi)) return toast("Enter a valid UPI ID");
+            if (!amt || amt < WD_MIN) return toast("Minimum withdraw is \u20b9" + WD_MIN);
+            if (curUserBal < amt) return alert("Balance low hai!");
+            if (wdBusy) return; wdBusy = true;
+            const uid = auth.currentUser.uid, app = wdApp, em = wdEm, fee = em ? Math.round(amt * 0.16) : 0, net = amt - fee;
+            db.ref('users/' + uid + '/coins').transaction(c => { c = c || 0; if (c < amt) return; return c - amt; }, (e, ok) => {
+                wdBusy = false;
+                if (e || !ok) return alert(e ? "Error: " + e.message : "Balance low hai!");
+                const tKey = db.ref('transactions/' + uid).push().key, wKey = db.ref('withdrawals').push().key;
+                db.ref('withdrawals/' + wKey).set({ req_id: wKey, user_id: uid, username: document.getElementById('pUserTag').innerText, amount: amt, upi: upi, upi_app: app, status: "Pending", time: Date.now(), trans_key: tKey, em: em, fee: fee, net: net });
+                db.ref('transactions/' + uid + '/' + tKey).set({ amt: amt, match: "Withdraw Request", type: "minus", status: "Pending", time: Date.now(), upi_app: app, em: em, fee: fee, net: net });
+                alert(em ? "Emergency withdraw sent successfully! 16% fee ₹" + fee + " cut, you get ₹" + net + " within 3 hours." : "Withdraw request sent successfully!");
+                document.getElementById('wdAmount').value = ''; document.getElementById('wdUpi').value = ''; wdApp = '';
+                closeWithdraw();
+            });
+        }
+
+        /* ---------- COIN CODE ---------- */
+        document.getElementById('coinCodeInput').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase(); });
+        function redeemCoinCode() {
+            if (!auth || !auth.currentUser) return noFb();
+            const code = document.getElementById('coinCodeInput').value.trim().toUpperCase();
+            if (!/^[A-Z0-9_-]{3,20}$/.test(code)) return alert("Invalid code");
+            const uid = auth.currentUser.uid;
+            const btn = document.getElementById('coinCodeBtn');
+            const ref = db.ref('coin_codes/' + code);
+            btn.disabled = true;
+            let coins = 0;
+            ref.once('value').then(s => {
+                if (!s.exists()) throw new Error("Invalid code");
+                const c = s.val();
+                coins = parseInt(c.coins) || 0;
+                const limit = parseInt(c.limit) || 0;
+                if (c.active === false || c.deleted) throw new Error("Invalid code");
+                if (limit > 0 && (c.used_count || 0) >= limit) throw new Error("Is code ki limit poori ho chuki hai!");
+                // 1) is user ne pehle use kiya? (atomic)
+                return ref.child('used_by/' + uid).transaction(cur => cur ? undefined : true).then(r1 => {
+                    if (!r1.committed) throw new Error("Aap ye code pehle hi use kar chuke ho!");
+                    // 2) limit check + count badhao (atomic)
+                    return ref.child('used_count').transaction(n => { n = n || 0; if (limit > 0 && n >= limit) return; return n + 1; }).then(r2 => {
+                        if (!r2.committed) {
+                            return ref.child('used_by/' + uid).remove().then(() => { throw new Error("Is code ki limit poori ho chuki hai!"); });
+                        }
+                        // 3) coins add
+                        return db.ref('users/' + uid).update({ coins: firebase.database.ServerValue.increment(coins) }).then(() => {
+                            db.ref('transactions/' + uid).push({ amt: coins, match: "Coin Code: " + code, type: "plus", status: "Approved", time: Date.now() });
+                            alert(coins + " coins add ho gaye!");
+                            document.getElementById('coinCodeInput').value = '';
+                            closeCoinCode();
+                        });
+                    });
+                });
+            }).catch(e => alert(e.message || "Kuch gadbad ho gayi, dobara try karo.")).then(() => { btn.disabled = false; });
+        }
+        /* ---------- UI HELPERS ---------- */
+        function openInfo(t, b) { document.getElementById('infoTitle').innerText = t; document.getElementById('infoBody').innerText = b; ov('infoPage', true); }
+        function openAnnounce() { openInfo('ANNOUNCEMENTS', 'Loading...'); db.ref('admin_settings/announce').once('value', s => { document.getElementById('infoBody').innerText = s.val() || 'Abhi koi announcement nahi hai.'; }); }
+        function openAbout() { openInfo('ABOUT TOTA FF', 'TOTA FF ek Free Fire tournament application hai jahan aap apna match chunkar khel sakte ho aur jeetne par prize paa sakte ho.\n\n✅ Fair Play – har match ke rules sabke liye same hain aur result match ke baad app mein saaf dikhta hai.\n\n✅ Deposit – payment approve hote hi coins aapke wallet mein aate hain, zyada se zyada 24 ghante ke andar.\n\n✅ Withdraw – withdraw request 24 ghante ke andar aapke UPI par bheji jaati hai.\n\n✅ Emergency Withdraw – jaldi chahiye to payout 3 ghante mein (16% fee ke saath).\n\n✅ Support – koi bhi problem ho to Customer Support se seedha contact karo.\n\nHamara maksad ek bharosemand aur transparent platform banana hai. Khelo, jeeto aur enjoy karo! 🎮'); }
+        function shareApp() { db.ref('admin_settings/links').once('value', s => { const v = s.val() || {}, url = v.share || location.href, text = 'Join TOTA FF - Free Fire tournament app!'; if (navigator.share) navigator.share({ title: 'TOTA FF', text: text, url: url }).catch(() => {}); else if (navigator.clipboard) { navigator.clipboard.writeText(url); toast('Link copied'); } else prompt('Copy link', url); }); }
+        function openTutorial() { db.ref('admin_settings/links/tutorial').once('value', s => { const l = s.val(); if (!l) return toast('Tutorial abhi available nahi hai'); window.open(/^https?:/i.test(l) ? l : 'https://' + l, '_blank'); }); }
+        function openCoinCode() { document.getElementById('coinCodePage').classList.add('overlay-active'); }
+        function closeCoinCode() { document.getElementById('coinCodePage').classList.remove('overlay-active'); }
+        function openHistory() { document.getElementById('historyPage').classList.add('overlay-active'); }
+        function closeHistory() { document.getElementById('historyPage').classList.remove('overlay-active'); }
+        function openAddMoney() { document.getElementById('addMoneyPage').classList.add('overlay-active'); }
+        function closeAddMoney() { clearInterval(gatewayTimerInterval); document.getElementById('gatewayStep1').classList.remove('hidden'); document.getElementById('gatewayStep2').classList.add('hidden'); document.getElementById('depositAmount').value = ''; document.getElementById('payerUpiInput').value = ''; document.getElementById('addMoneyPage').classList.remove('overlay-active'); }
+        let wdEm = false;
+        function openWithdraw(em) {
+            wdEm = em === true; buildUpiGrid();
+            const t = document.getElementById('wdTitle'); t.innerText = wdEm ? '🚨 Emergency Withdraw' : 'Withdraw'; t.style.color = wdEm ? 'var(--red)' : '';
+            document.getElementById('wdNote').innerHTML = wdEm ? '<b style="color:var(--red)">16% fee</b> is cut from your amount. Payout within <b>3 hours</b> to your UPI ID.' : 'Minimum withdraw &#8377;30. Payment is sent to your UPI ID after approval.';
+            const b = document.getElementById('wdSubmit'); b.style.background = wdEm ? 'var(--red)' : ''; b.style.color = wdEm ? '#fff' : '';
+            document.getElementById('wdAmount').oninput = wdPrev; wdPrev();
+            document.getElementById('withdrawModal').classList.add('overlay-active');
+        }
+        function wdPrev() {
+            let n = document.getElementById('wdFeeNote');
+            if (!n) { n = document.createElement('div'); n.id = 'wdFeeNote'; n.style.cssText = 'font-size:14px;font-weight:800;margin:6px 2px 10px;color:var(--red)'; document.getElementById('wdAmount').after(n); }
+            const a = parseInt(document.getElementById('wdAmount').value) || 0, f = Math.round(a * .16);
+            n.innerText = wdEm && a ? '16% fee: -₹' + f + '  |  You get: ₹' + (a - f) : '';
+        }
+        function openRules() { ov('rulesPage', true); const b = document.getElementById('rulesBody'); b.innerText = 'Loading...'; db.ref('admin_settings/rules').once('value', s => { b.innerText = s.val() || 'Rules abhi set nahi hain.'; }); }
+        function closeWithdraw() { document.getElementById('withdrawModal').classList.remove('overlay-active'); }
+        function closePortal() { document.getElementById('joinPortal').classList.remove('overlay-active'); }
+        function showTab(p, id) { document.querySelectorAll('.page').forEach(pg => pg.classList.remove('active-page')); document.getElementById(p).classList.add('active-page'); document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('nav-active')); if (document.getElementById(id)) document.getElementById(id).classList.add('nav-active'); }
+        function openInsta() { openSupport(); }
+        function openSupport() {
+            ov('supportPage', true);
+            db.ref('admin_settings/support').once('value', s => {
+                const v = s.val() || {}; const ig = String(v.instagram || '').trim(), tg = String(v.telegram || '').trim(), em = String(v.email || '').trim();
+                const isUrl = x => /^https?:/i.test(x);
+                const igHref = isUrl(ig) ? ig : 'https://instagram.com/' + ig.replace(/^@/, '');
+                const tgHref = isUrl(tg) ? tg : 'https://t.me/' + tg.replace(/^@/, '');
+                const r = (ic, name, sub, href) => `<a class="sup-row" href="${hx(href)}" target="_blank" rel="noopener"><span class="sup-ic"><svg class="ic"><use href="#i-${ic}"/></svg></span><div><b>${name}</b>${sub ? `<small>${hx(sub)}</small>` : ''}</div><i>&rsaquo;</i></a>`;
+                const h = (em ? r('mail', 'Email', em, 'mailto:' + em) : '') + (ig ? r('insta', 'Instagram', isUrl(ig) ? '' : '@' + ig.replace(/^@/, ''), igHref) : '') + (tg ? r('send', 'Telegram', isUrl(tg) ? '' : '@' + tg.replace(/^.*\//, '').replace(/^@/, ''), tgHref) : '');
+                document.getElementById('supList').innerHTML = h || '<p class="empty">Support details not set yet.</p>';
+            });
+        }
+        function openProfileEdit() {
+            const p = curProfile || {};
+            document.getElementById('eFirst').value = p.first_name || ''; document.getElementById('eLast').value = p.last_name || '';
+            document.getElementById('eUser').value = p.username || ''; document.getElementById('eEmail').value = p.email || ''; document.getElementById('ePhone').value = p.phone || ''; const sg = savedGame(); document.getElementById('eGName').value = sg.n; document.getElementById('eGUid').value = sg.u;
+            eAv = p.avatar || ''; buildAvPicker('eAvPick', eAv, k => eAv = k);
+            ov('profileEdit', true);
+        }
+        function updateProfile() {
+            const f = document.getElementById('eFirst').value.trim(), l = document.getElementById('eLast').value.trim();
+            if (!f) return alert("Enter first name!");
+            try { localStorage.setItem(gk(), JSON.stringify({ n: document.getElementById('eGName').value.trim(), u: document.getElementById('eGUid').value.trim() })); } catch (e) {}
+            db.ref('users/' + auth.currentUser.uid).update({ avatar: eAv || (curProfile && curProfile.avatar) || 'b1', first_name: f, last_name: l, name: (f + ' ' + l).trim(), email: document.getElementById('eEmail').value.trim(), phone: document.getElementById('ePhone').value.trim(), game_name: document.getElementById('eGName').value.trim(), game_uid: document.getElementById('eGUid').value.trim() })
+                .then(() => alert("Profile updated!")).catch(e => alert("Error: " + e.message));
+        }
+        function resetPass() {
+            const o = document.getElementById('oldPass').value, n = document.getElementById('newPass').value;
+            if (!o || n.length < 6) return alert("Enter old password and new password (min 6)!");
+            const cu = auth.currentUser;
+            cu.reauthenticateWithCredential(firebase.auth.EmailAuthProvider.credential(toEmail(curProfile.username || ''), o))
+                .then(() => cu.updatePassword(n)).then(() => { alert("Password updated!"); document.getElementById('oldPass').value = ''; document.getElementById('newPass').value = ''; })
+                .catch(() => alert("Old password galat hai!"));
+        }
+        function openMyMatches() {
+            const l = [...myJoinRecs].sort((a, b) => (b.time || 0) - (a.time || 0));
+            document.getElementById('myMatchesList').innerHTML = l.map(j => {
+                const m = matchesCache.find(x => x.id === j.match_id) || {}, st = m.status || 'upcoming';
+                return `<div class="history-item"><div><b>${j.match_title || m.title || 'Match'}</b><br><small>Pos ${(j.positions || []).join(', ') || '-'} &middot; ${new Date(j.time).toLocaleString()}</small></div><div>${st === 'end' ? `<button class="btn-action" style="padding:8px 12px; background:var(--accent)" onclick="viewWinners('${j.match_id}')">VIEW WINNERS</button>` : `<small style="color:var(--neon)">${st.toUpperCase()}</small>`}</div></div>`;
+            }).join('') || '<p style="color:#8FA9C9; text-align:center;">No matches played yet.</p>';
+            ov('myMatchesPage', true);
+        }
+        let coT;
+        const fmtD = ms => { const s = Math.floor(Math.max(0, ms) / 1000); return [Math.floor(s / 3600), Math.floor(s % 3600 / 60), s % 60].map(v => String(v).padStart(2, '0')).join(':'); };
+        function orderTick() { document.querySelectorAll('[data-dl]').forEach(e => { const r = Number(e.dataset.dl) - Date.now(); e.innerText = r > 0 ? '⏱ ' + fmtD(r) + ' left' : 'Taking longer than expected - contact support'; }); }
+        function ordHtml(l, wd) {
+            return l.map(t => {
+                const ok = t.status === 'Approved' || t.status === 'Success', c = t.status === 'Rejected' ? 'var(--red)' : (ok ? 'var(--green)' : 'var(--gold)');
+                let note;
+                if (t.status === 'Pending') note = '<div class="co-t" style="color:' + (t.em ? 'var(--red)' : 'var(--gold)') + '" data-dl="' + ((t.time || 0) + (t.em ? 108e5 : 864e5)) + '"></div>';
+                else if (ok) { const d = t.done_time ? t.done_time - t.time : 0; note = '<div class="co-n" style="color:' + c + '">' + (wd ? 'Paid' : 'Coins delivered') + (d > 0 ? ' in ' + Math.floor(d / 36e5) + 'h ' + Math.floor(d % 36e5 / 6e4) + 'm' : '') + '</div>'; }
+                else note = '<div class="co-n" style="color:' + c + '">' + (wd ? 'Withdraw rejected' : 'Payment rejected') + '</div>';
+                const em = t.em ? '<div class="co-n" style="color:var(--red)">🚨 EMERGENCY &middot; 16% fee ₹' + t.fee + ' cut &middot; you get ₹' + t.net + '</div>' : '';
+                return `<div class="history-item" style="border-left-color:${c}"><div><b style="font-size:16px">${wd ? '₹' + t.amt : t.amt + ' Coins'}</b><br><small>${new Date(t.time).toLocaleString()}</small>${em}${note}</div><div style="color:${c}; font-weight:bold; font-size:14px">${hx(t.status === 'Success' ? 'PAID' : t.status)}</div></div>`;
+            }).join('') || '<p style="color:#8FA9C9; text-align:center;">Nothing here yet.</p>';
+        }
+        function renderOrders() {
+            const s = f => txCache.filter(f).sort((a, b) => (b.time || 0) - (a.time || 0));
+            document.getElementById('myOrdersList').innerHTML = ordHtml(s(isDep), false);
+            document.getElementById('myWdList').innerHTML = ordHtml(s(isWd), true);
+            orderTick();
+        }
+        function openMyOrders() { renderOrders(); ov('myOrdersPage', true); }
+        function openMyWd() { renderOrders(); ov('myWdPage', true); }
+        setInterval(orderTick, 1000);
+    </script>
+
+<div id="upiAsk" style="display:none"><div class="tpop"><h3>UPI ID nahi daali</h3><p>Aapne UPI ID / Number nahi likha. Please enter UPI ID, taaki payment jaldi verify ho sake.</p><div class="row"><button class="ghost" onclick="upiAskCancel()">CANCEL</button><button class="pri" onclick="upiAskSkip()">SKIP</button></div></div></div>
+<div id="depNeed" style="display:none"><div class="tpop"><h3>Please Deposit</h3><p id="depNeedMsg">Aapke account mein coins nahi hain. Match join karne ke liye pehle deposit karo.</p><div class="row"><button class="dim" onclick="tpShow('depNeed',false)">CLOSE</button><button class="gold" onclick="goDeposit()">DEPOSIT</button></div></div></div>
+<div id="paySuccess" style="display:none;flex-direction:column"><div class="fill"></div><div class="ring"></div><div class="chk"><svg viewBox="0 0 64 64" width="64" height="64"><path d="M16 33 L28 45 L49 21"/></svg></div><h2>Payment Submitted!</h2><p>Coins 24 ghante ke andar add ho jayenge.</p></div>
+
+<div id="ptr" aria-hidden="true"><span class="ptr-arrow">&#8595;</span><span id="ptrTxt">Pull to refresh</span></div>
+<script>
+/* ===== Pull-to-refresh: SIRF Home page par, lamba pull karne par ===== */
+(function () {
+    var THRESHOLD = 90;   // finger ko itne px neeche khinchna padega (70-100 ke beech rakho)
+    var MAX_PULL = 140;
+    var ind = document.getElementById('ptr'), txt = document.getElementById('ptrTxt');
+    var startY = 0, startX = 0, dy = 0, tracking = false, pulling = false, busy = false;
+
+    function homeActive() {
+        var h = document.getElementById('homePage'), m = document.getElementById('mainApp');
+        if (!h || !h.classList.contains('active-page')) return false;
+        if (m && getComputedStyle(m).display === 'none') return false;
+        if (document.querySelector('.overlay.overlay-active')) return false;
+        if (document.querySelector('.pop-bg.show')) return false;
+        var a = document.getElementById('authPage'); if (a && !a.classList.contains('hidden')) return false;
+        var sp = document.getElementById('splash'); if (sp && !sp.classList.contains('open') && getComputedStyle(sp).display !== 'none' && sp.offsetParent !== null) return false;
+        var ids = ['upiAsk', 'depNeed', 'paySuccess']; for (var i = 0; i < ids.length; i++) { var e = document.getElementById(ids[i]); if (e && getComputedStyle(e).display !== 'none') return false; }
+        return true;
+    }
+    function atTop() { return (window.pageYOffset || document.documentElement.scrollTop || document.body.scrollTop || 0) <= 0; }
+    function hScroller(t) { while (t && t !== document.body) { if (t.scrollWidth > t.clientWidth + 2) { var o = getComputedStyle(t).overflowX; if (o === 'auto' || o === 'scroll') return true; } t = t.parentElement; } return false; }
+    function show(d) {
+        var y = Math.min(d, MAX_PULL) * 0.6 - 60;
+        ind.classList.remove('anim');
+        ind.style.opacity = Math.min(1, d / THRESHOLD);
+        ind.style.transform = 'translate(-50%,' + y + 'px)';
+        var ready = d >= THRESHOLD; ind.classList.toggle('go', ready); txt.textContent = ready ? 'Release to refresh' : 'Pull to refresh';
+    }
+    function reset() {
+        ind.classList.add('anim'); ind.style.opacity = 0; ind.style.transform = 'translate(-50%,-70px)'; ind.classList.remove('go', 'spin');
+    }
+    document.addEventListener('touchstart', function (e) {
+        tracking = pulling = false; dy = 0;
+        if (busy || e.touches.length !== 1 || !homeActive() || !atTop()) return;
+        startY = e.touches[0].clientY; startX = e.touches[0].clientX; tracking = true;
+    }, { passive: true });
+    document.addEventListener('touchmove', function (e) {
+        if (!tracking) return;
+        if (!homeActive()) { tracking = pulling = false; reset(); return; }
+        var t = e.touches[0], mx = t.clientX - startX; dy = t.clientY - startY;
+        if (!pulling) {
+            if (dy <= 0 || !atTop()) { if (dy < -4) tracking = false; return; }       // upar scroll = normal
+            if (Math.abs(mx) > Math.abs(dy) || hScroller(e.target)) { tracking = false; return; }   // side swipe
+            if (dy < 12) return;                                                      // chhota touch ignore
+            pulling = true;
+        }
+        if (e.cancelable) e.preventDefault();      // native refresh/overscroll roko
+        show(dy);
+    }, { passive: false });
+    function end() {
+        if (!tracking && !pulling) return;
+        var fire = pulling && dy >= THRESHOLD && homeActive() && atTop();
+        tracking = pulling = false;
+        if (fire) { busy = true; ind.classList.remove('anim'); ind.classList.add('spin'); txt.textContent = 'Refreshing...'; ind.style.opacity = 1; ind.style.transform = 'translate(-50%,10px)'; setTimeout(function () { location.reload(); }, 350); }
+        else reset();
+    }
+    document.addEventListener('touchend', end, { passive: true });
+    document.addEventListener('touchcancel', function () { tracking = pulling = false; reset(); }, { passive: true });
+})();
+</script>
+<script>
+/* Har password field (Login, Register, Confirm, Profile) mein eye toggle */
+(function () {
+    var EYE = '<svg class="e-closed" viewBox="0 0 24 24"><path d="M3 9.5c2.4 4 5.7 6 9 6s6.6-2 9-6"/><path d="M12 15.5V19M6.2 13.6 4.4 16.4M17.8 13.6l1.8 2.8"/></svg>' +
+              '<svg class="e-open" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg>';
+    function addEye(inp) {
+        if (inp.dataset.eye) return; inp.dataset.eye = '1';
+        var w = document.createElement('div'); w.className = 'pw-wrap';
+        inp.parentNode.insertBefore(w, inp); w.appendChild(inp);
+        var b = document.createElement('button'); b.type = 'button'; b.className = 'pw-eye'; b.setAttribute('aria-label', 'Show password'); b.innerHTML = EYE;
+        b.addEventListener('click', function (e) {
+            e.preventDefault();
+            var show = inp.type === 'password';
+            inp.type = show ? 'text' : 'password';
+            b.classList.toggle('on', show); b.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+            try { inp.focus({ preventScroll: true }); var l = inp.value.length; inp.setSelectionRange(l, l); } catch (x) {}
+        });
+        w.appendChild(b);
+    }
+    function init() { document.querySelectorAll('input[type="password"]').forEach(addEye); }
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
+})();
+</script>
+</body>
+</html>
