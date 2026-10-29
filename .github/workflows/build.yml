@@ -1,40 +1,52 @@
-name: Android APK Build
+name: Build Signed APK
 
 on:
-  push:
-    branches: [ main ]
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
-      - name: Set up Java
-        uses: actions/setup-java@v3
+      - uses: actions/setup-node@v4
         with:
-          distribution: 'temurin'
-          java-version: '17'
+          node-version: 20
 
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
 
-      - name: Compile APK
+      - name: Capacitor project banao
         run: |
-          # Simple Android project skeleton
-          mkdir -p app/src/main/assets/public
-          cp index.html app/src/main/assets/public/index.html
-          
-          # Gradle build
-          cat << 'EOF' > build.gradle
-          allprojects {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
-          EOF
-          
-          echo "Build process initialized successfully."
+          npm init -y
+          npm i @capacitor/core@7 @capacitor/cli@7 @capacitor/android@7 onesignal-cordova-plugin
+          echo '{"appId":"com.tota.ff","appName":"TOTA FF","webDir":"www","android":{"allowMixedContent":true}}' > capacitor.config.json
+          npx cap add android
+          npx cap sync android
+
+      - name: Release APK build
+        working-directory: android
+        run: ./gradlew assembleRelease
+
+      - name: APK sign karo
+        run: |
+          if [ ! -f tota.jks ]; then
+            keytool -genkey -v -keystore tota.jks -alias tota -keyalg RSA -keysize 2048 -validity 10000 -storepass tota123456 -keypass tota123456 -dname "CN=TOTA FF, O=TOTA"
+          fi
+          BT=$(ls -d $ANDROID_HOME/build-tools/* | sort -V | tail -1)
+          $BT/zipalign -p 4 android/app/build/outputs/apk/release/app-release-unsigned.apk aligned.apk
+          $BT/apksigner sign --ks tota.jks --ks-pass pass:tota123456 --key-pass pass:tota123456 --out TOTA-FF.apk aligned.apk
+          $BT/apksigner verify TOTA-FF.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TOTA-FF-APK
+          path: TOTA-FF.apk
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: TOTA-FF-KEYSTORE-SAVE-KARO
+          path: tota.jks
           
